@@ -10,6 +10,7 @@ What works today:
 - inspect stored opinions, passages, and progress
 - resume the current passage for a user
 - ask a span-anchored question and get a heuristic `guessAnswer`
+- open a browser app shell that matches the current UX, IA, flow, responsive, and routing specs
 
 The current target opinion is:
 
@@ -121,6 +122,45 @@ GOCACHE=$(pwd)/.gocache go run ./cmd/sprout ask \
 
 `ask` saves the question first, then builds context from the stored opinion, passage, citations, and open questions, and finally runs the heuristic `guessAnswer`.
 
+## Browser Shell
+
+Run the browser shell:
+
+```sh
+GOCACHE=$(pwd)/.gocache go run ./cmd/sprout-web --addr :8080
+```
+
+Or use the wrapper:
+
+```sh
+scripts/run_browser.sh
+```
+
+Then open:
+
+```txt
+http://localhost:8080
+```
+
+This browser target now boots against the real checked-in Supreme Court fixture and renders a real passage-by-passage reading shell through `/api/reader`. It shows real opinion identity, passage text, progress snapshot, and citation availability, and the `Continue` action advances through real generated passages.
+
+Current browser capabilities:
+
+- load the real `24-777_9ol1` opinion fixture into SQLite if needed
+- render the current passage and passage metadata
+- advance through real generated passages
+- open citation detail without leaving the reading workspace
+- select passage text, submit a question, and review a heuristic answer
+- keep passage and panel state in the URL enough to support refresh and basic back/forward navigation
+
+Useful browser URL shapes:
+
+```txt
+http://localhost:8080/?passage=<passage-id>
+http://localhost:8080/?passage=<passage-id>&panel=citation
+http://localhost:8080/?passage=<passage-id>&panel=question&start=0&end=32
+```
+
 ## Scripts
 
 Thin wrappers are available under [`scripts/`](.scripts):
@@ -131,6 +171,7 @@ Thin wrappers are available under [`scripts/`](.scripts):
 - [`scripts/list_passages.sh`](./scripts/list_passages.sh)
 - [`scripts/read_current.sh`](./scripts/read_current.sh)
 - [`scripts/ask.sh`](./scripts/ask.sh)
+- [`scripts/run_browser.sh`](./scripts/run_browser.sh)
 
 Example:
 
@@ -144,6 +185,7 @@ scripts/read_current.sh
 
 ## Current Limits
 
-- There is no browser UI yet. "Read" means CLI inspection of the current passage.
+- The browser target is now usable for the real fixture, but it is still an MVP shell rather than a finished product.
+- Citation rendering and question flow work, but they are still minimal and heuristic-driven.
 - `ingest-url` depends on network access. `ingest-file` is the reproducible local path.
 - The parsing and `guess...` functions are fixture-driven heuristics, not production-grade legal analysis.

@@ -14,5 +14,7 @@ Supporting files:
   Checked-in expectations for metadata, section markers, and citation-bearing passages.
 - `24-777_9ol1.excerpts.txt`
   Human-readable excerpts derived from the real opinion and used to lock the expectations.
+- `24-777_9ol1.quality.json`
+  Passage-quality corpus covering sentence-boundary edge cases, quote/citation cohesion, page-header artifacts, and line-break hyphenation cleanup.
 
 The PDF hash in the expectation file is the integrity check for the real source artifact. If the source PDF is ever refreshed upstream, update the hash and re-validate every expectation before changing the checked-in fixture set.

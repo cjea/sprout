@@ -1,0 +1,73 @@
+{
+  "fileName": "24-777_9ol1.pdf",
+  "cases": [
+    {
+      "id": "real-held-pp",
+      "kind": "sentence_boundary",
+      "source": "real_fixture",
+      "input": "Held: Courts should review the Board’s determination that a given set of facts does not rise to the level of “persecution” under a substantial-evidence standard. Pp. 3–10.",
+      "wantSentences": [
+        "Held: Courts should review the Board’s determination that a given set of facts does not rise to the level of “persecution” under a substantial-evidence standard. Pp. 3–10."
+      ]
+    },
+    {
+      "id": "real-nasrallah-usc",
+      "kind": "sentence_boundary",
+      "source": "real_fixture",
+      "input": "The Court has previously interpreted this provision to prescribe a deferential, “substantial-evidence standard,” Nasrallah v. Barr, 590 U. S. 573, 584, under which administrative findings of fact are “conclusive unless any reasonable adjudicator would be compelled to conclude to the contrary,” 8 U. S. C. §1252(b)(4)(B).",
+      "wantSentences": [
+        "The Court has previously interpreted this provision to prescribe a deferential, “substantial-evidence standard,” Nasrallah v. Barr, 590 U. S. 573, 584, under which administrative findings of fact are “conclusive unless any reasonable adjudicator would be compelled to conclude to the contrary,” 8 U. S. C. §1252(b)(4)(B)."
+      ]
+    },
+    {
+      "id": "synthetic-id-at",
+      "kind": "sentence_boundary",
+      "source": "synthetic",
+      "input": "The court rejected that argument. Id., at 484. The Government presses a different theory.",
+      "wantSentences": [
+        "The court rejected that argument.",
+        "Id., at 484.",
+        "The Government presses a different theory."
+      ]
+    },
+    {
+      "id": "synthetic-usc-trailing-cite",
+      "kind": "sentence_boundary",
+      "source": "synthetic",
+      "input": "Under the INA, the U. S. Government “may grant asylum” to a noncitizen if it “determines” that he “is a refugee.” 8 U. S. C. §1158(b)(1)(A).",
+      "wantSentences": [
+        "Under the INA, the U. S. Government “may grant asylum” to a noncitizen if it “determines” that he “is a refugee.” 8 U. S. C. §1158(b)(1)(A)."
+      ]
+    },
+    {
+      "id": "synthetic-quote-plus-case-cite",
+      "kind": "sentence_boundary",
+      "source": "synthetic",
+      "input": "Substantial evidence means only “such relevant evidence as a reasonable mind might accept as adequate to support a conclusion.” Biestek v. Berryhill, 587 U. S. 97, 103.",
+      "wantSentences": [
+        "Substantial evidence means only “such relevant evidence as a reasonable mind might accept as adequate to support a conclusion.” Biestek v. Berryhill, 587 U. S. 97, 103."
+      ]
+    },
+    {
+      "id": "synthetic-page-header-artifact",
+      "kind": "text_cleanup",
+      "source": "synthetic",
+      "input": "The Board rejected the application. 2 URIAS-ORELLANA v. BONDI Syllabus The court of appeals affirmed.",
+      "wantNormalized": "The Board rejected the application. The court of appeals affirmed."
+    },
+    {
+      "id": "synthetic-linebreak-hyphenation",
+      "kind": "text_cleanup",
+      "source": "synthetic",
+      "input": "The statute permits asy-\nlum when the applicant shows past perse-\ncution.",
+      "wantNormalized": "The statute permits asylum when the applicant shows past persecution."
+    },
+    {
+      "id": "synthetic-true-hyphen-preserved",
+      "kind": "text_cleanup",
+      "source": "synthetic",
+      "input": "The court applied a substantial-evidence standard to a well-founded-fear claim.",
+      "wantNormalized": "The court applied a substantial-evidence standard to a well-founded-fear claim."
+    }
+  ]
+}

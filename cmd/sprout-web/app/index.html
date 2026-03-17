@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sprout Web</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <div class="workspace-shell">
+      <header class="identity-bar">
+        <div class="identity-copy">
+          <p class="eyebrow">Supreme Court Opinion Reader</p>
+          <h1 data-case-name>Loading opinion...</h1>
+          <p class="identity-meta" data-identity-meta>Preparing browser reader state...</p>
+        </div>
+        <div class="progress-chip" data-progress-chip>Bootstrapping</div>
+      </header>
+
+      <main class="reading-room">
+        <section class="passage-stage" aria-labelledby="passage-heading">
+          <p class="section-label">Current Passage</p>
+          <h2 id="passage-heading" data-passage-heading>Passage-first workspace</h2>
+          <p class="identity-meta" data-passage-meta>Loading passage metadata...</p>
+          <blockquote class="passage-card">
+            <p data-passage-text>Loading passage...</p>
+          </blockquote>
+        </section>
+
+        <nav class="action-strip" aria-label="Passage actions">
+          <button type="button" class="action-button" data-panel="citation" data-citation-button>Reveal Citation</button>
+          <button type="button" class="action-button" data-panel="question">Ask Question</button>
+          <button type="button" class="action-button" data-panel="answer">Review Answer</button>
+          <button type="button" class="action-button action-button-primary" data-continue-button>Continue</button>
+        </nav>
+
+        <aside class="secondary-surface" data-panel-root hidden>
+          <div class="panel-card" data-panel-view="citation" hidden>
+            <div class="panel-header">
+              <p class="panel-label">Citation Detail</p>
+              <button type="button" class="close-button" data-close-panel>Close</button>
+            </div>
+            <p class="panel-anchor" data-citation-anchor>No active citation selected.</p>
+            <ul class="citation-list" data-citation-list></ul>
+            <p class="panel-body">Secondary detail lives here. It supports the passage without replacing it.</p>
+          </div>
+
+          <div class="panel-card" data-panel-view="question" hidden>
+            <div class="panel-header">
+              <p class="panel-label">Question Compose</p>
+              <button type="button" class="close-button" data-close-panel>Close</button>
+            </div>
+            <p class="panel-anchor" data-question-anchor>“Selected quote stays visible here.”</p>
+            <label class="composer-label" for="question-input">Question</label>
+            <textarea id="question-input" rows="4" placeholder="What does this sentence mean in context?"></textarea>
+            <button type="button" class="action-button action-button-primary panel-submit" data-question-submit>Submit Question</button>
+          </div>
+
+          <div class="panel-card" data-panel-view="answer" hidden>
+            <div class="panel-header">
+              <p class="panel-label">Guessed Answer</p>
+              <button type="button" class="close-button" data-close-panel>Close</button>
+            </div>
+            <p class="panel-anchor" data-answer-anchor>Selected quote preserved here.</p>
+            <p class="panel-body" data-answer-body>Answer review stays inside the workspace instead of navigating away from reading.</p>
+            <ul class="citation-list" data-answer-evidence></ul>
+            <p class="caveat" data-answer-caveat>Heuristic placeholder. Real data and answer flow come in later bones.</p>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="continuity-footer">
+        <p data-footer-copy>One dominant passage. One temporary branch at a time. Clear return to reading.</p>
+      </footer>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

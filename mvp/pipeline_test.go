@@ -3,6 +3,7 @@ package mvp
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -76,5 +77,80 @@ func TestSplitSentencesKeepsLegalAbbreviationsIntactOnRealFixtureExcerpt(t *test
 	}
 	if !strings.Contains(sentences[0], "Nasrallah v. Barr, 590 U. S. 573, 584") {
 		t.Fatalf("expected case citation to remain intact")
+	}
+}
+
+func TestChunkSectionsStripsRunningHeadsFromRealFixture(t *testing.T) {
+	fixture := loadRealFixturePDF(t)
+
+	opinionID, err := MakeOpinionID(fixture.SourceURL)
+	if err != nil {
+		t.Fatalf("make opinion id: %v", err)
+	}
+	raw, err := MakeRawPDF(opinionID, fixture.SourceURL, fixture.Bytes, fixture.FetchedAt)
+	if err != nil {
+		t.Fatalf("make raw pdf: %v", err)
+	}
+	parsed, err := ParsePDF(raw)
+	if err != nil {
+		t.Fatalf("parse pdf: %v", err)
+	}
+	sections, err := GuessSections(Model{Name: "heuristic-v1", MaxContextTokens: 8192}, parsed)
+	if err != nil {
+		t.Fatalf("guess sections: %v", err)
+	}
+	passages, err := ChunkSections(DefaultChunkPolicy(), sections)
+	if err != nil {
+		t.Fatalf("chunk sections: %v", err)
+	}
+
+	headerPattern := regexp.MustCompile(`\bURIAS-ORELLANA v\. BONDI\b.*\b(?:Syllabus|Opinion of the Court)\b`)
+	slipPattern := regexp.MustCompile(`\(Slip Opinion\)|OCTOBER TERM`)
+	for _, passage := range passages {
+		if headerPattern.MatchString(string(passage.Text)) {
+			t.Fatalf("passage %s still contains running head: %q", passage.PassageID, passage.Text)
+		}
+		if slipPattern.MatchString(string(passage.Text)) {
+			t.Fatalf("passage %s still contains slip header: %q", passage.PassageID, passage.Text)
+		}
+	}
+}
+
+func TestSplitSentencesAgainstQualityCorpusSentenceCases(t *testing.T) {
+	corpus := loadQualityCorpus(t)
+
+	for _, testCase := range corpus.Cases {
+		if testCase.Kind != "sentence_boundary" {
+			continue
+		}
+
+		t.Run(testCase.ID, func(t *testing.T) {
+			got := splitSentences(testCase.Input)
+			if len(got) != len(testCase.WantSentences) {
+				t.Fatalf("got %d sentences, want %d: %#v", len(got), len(testCase.WantSentences), got)
+			}
+			for index := range testCase.WantSentences {
+				if got[index] != testCase.WantSentences[index] {
+					t.Fatalf("sentence %d got %q want %q", index, got[index], testCase.WantSentences[index])
+				}
+			}
+		})
+	}
+}
+
+func TestCleanPassageSourceTextAgainstQualityCorpusCleanupCases(t *testing.T) {
+	corpus := loadQualityCorpus(t)
+
+	for _, testCase := range corpus.Cases {
+		if testCase.Kind != "text_cleanup" {
+			continue
+		}
+
+		t.Run(testCase.ID, func(t *testing.T) {
+			got := cleanPassageSourceText(testCase.Input)
+			if got != testCase.WantNormalized {
+				t.Fatalf("got %q want %q", got, testCase.WantNormalized)
+			}
+		})
 	}
 }
