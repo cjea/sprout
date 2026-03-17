@@ -1,0 +1,46 @@
+{
+  "source_url": "https://www.supremecourt.gov/opinions/25pdf/24-777_9ol1.pdf",
+  "file_name": "24-777_9ol1.pdf",
+  "sha256": "c1ae464f9a8087f6f994d545f67faffd884e5e5686c985614125d0e59f6b0524",
+  "case_name": "Urias-Orellana v. Bondi",
+  "full_caption": "URIAS-ORELLANA ET AL. v. BONDI, ATTORNEY GENERAL",
+  "docket_no": "24-777",
+  "decided_on": "March 4, 2026",
+  "term": "2025",
+  "pages": 15,
+  "sections": [
+    {
+      "kind": "syllabus",
+      "heading": "Syllabus",
+      "start_page": 1,
+      "evidence": "SUPREME COURT OF THE UNITED STATES\nSyllabus\nURIAS-ORELLANA ET AL. v. BONDI, ATTORNEY GENERAL"
+    },
+    {
+      "kind": "majority",
+      "heading": "JUSTICE JACKSON delivered the opinion of the Court.",
+      "start_page": 3,
+      "justice": "JACKSON",
+      "evidence": "JUSTICE JACKSON delivered the opinion of the Court."
+    }
+  ],
+  "citation_passages": [
+    {
+      "excerpt": "substantial-evidence review to the Board of Immigration Appeals’ determination whether a given set of undisputed facts constitutes “persecution” under 8 U. S. C. §1101(a)(42).",
+      "citations": [
+        "8 U. S. C. §1101(a)(42)"
+      ]
+    },
+    {
+      "excerpt": "The Court has previously interpreted this provision to prescribe a deferential, “substantial-evidence standard,” Nasrallah v. Barr, 590 U. S. 573, 584, under which administrative findings of fact are “conclusive unless any reasonable adjudicator would be compelled to conclude to the contrary,” 8 U. S. C. §1252(b)(4)(B).",
+      "citations": [
+        "Nasrallah v. Barr, 590 U. S. 573, 584"
+      ]
+    },
+    {
+      "excerpt": "Substantial evidence, we have long emphasized, is “‘more than a mere scintilla,’” but “means—and means only—‘such relevant evidence as a reasonable mind might accept as adequate to support a conclusion.’” Biestek v. Berryhill, 587 U. S. 97, 103.",
+      "citations": [
+        "Biestek v. Berryhill, 587 U. S. 97, 103"
+      ]
+    }
+  ]
+}

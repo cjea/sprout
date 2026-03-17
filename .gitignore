@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Go build and test artifacts
+.gocache/
+bin/
+coverage.out
+*.test
+
+# Local runtime data
+var/
+*.db
+*.db-shm
+*.db-wal
+
+# Bones local state
+.bones/
+
+# Editor settings
+.idea/
+.vscode/
