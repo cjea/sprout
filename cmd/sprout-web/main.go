@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,8 @@ type server struct {
 	files     http.Handler
 	userID    mvp.UserID
 	opinionID mvp.OpinionID
+	model     mvp.Model
+	logger    *log.Logger
 }
 
 type readerResponse struct {
@@ -50,6 +53,7 @@ type readerResponse struct {
 	Progress  progressDTO       `json:"progress"`
 	Passages  []passageListItem `json:"passages"`
 	Questions []questionDTO     `json:"questions"`
+	Repair    repairDTO         `json:"repair"`
 }
 
 type completeRequest struct {
@@ -70,6 +74,18 @@ type questionRequest struct {
 type questionResponse struct {
 	Question questionDTO `json:"question"`
 	Answer   answerDTO   `json:"answer"`
+}
+
+type repairRequest struct {
+	UserID    string `json:"userId"`
+	OpinionID string `json:"opinionId"`
+	PassageID string `json:"passageId"`
+	Operation string `json:"operation"`
+}
+
+type repairUndoRequest struct {
+	UserID    string `json:"userId"`
+	OpinionID string `json:"opinionId"`
 }
 
 type opinionDTO struct {
@@ -142,6 +158,32 @@ type evidenceDTO struct {
 	PassageID string `json:"passageId"`
 }
 
+type repairDTO struct {
+	Issues           []repairIssueDTO   `json:"issues"`
+	History          []repairHistoryDTO `json:"history"`
+	CanMergeNext     bool               `json:"canMergeNext"`
+	CanMergePrevious bool               `json:"canMergePrevious"`
+	CanSplitSentence bool               `json:"canSplitSentence"`
+	CanRemoveHeader  bool               `json:"canRemoveHeader"`
+}
+
+type repairIssueDTO struct {
+	Kind    string `json:"kind"`
+	Summary string `json:"summary"`
+}
+
+type repairHistoryDTO struct {
+	Revision      int    `json:"revision"`
+	OperationKind string `json:"operationKind"`
+	TargetPassage string `json:"targetPassage"`
+	CreatedAt     string `json:"createdAt"`
+}
+
+type repairResponse struct {
+	PassageID string `json:"passageId"`
+	Revision  int    `json:"revision"`
+}
+
 func main() {
 	cfg := serverConfig{}
 	flag.StringVar(&cfg.DBPath, "db", defaultDBPath, "sqlite database path")
@@ -178,18 +220,27 @@ func newServer(cfg serverConfig) (http.Handler, func() error, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	model, err := mvp.NewModel(cfg.ModelName, 8192)
+	if err != nil {
+		_ = storage.Close()
+		return nil, nil, err
+	}
 
 	app := &server{
 		storage:   storage,
 		files:     http.FileServer(http.FS(sub)),
 		userID:    userID,
 		opinionID: opinionID,
+		model:     model,
+		logger:    log.New(os.Stderr, "sprout-web ", log.LstdFlags),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/reader", app.handleReader)
 	mux.HandleFunc("/api/complete", app.handleComplete)
 	mux.HandleFunc("/api/question", app.handleQuestion)
+	mux.HandleFunc("/api/repair/apply", app.handleRepairApply)
+	mux.HandleFunc("/api/repair/undo", app.handleRepairUndo)
 	mux.HandleFunc("/", app.handleApp)
 
 	return mux, storage.Close, nil
@@ -362,12 +413,142 @@ loaded:
 		Progress:  progressData(state.Progress),
 		Passages:  passageListData(passages),
 		Questions: questionData(questions),
+		Repair:    repairData(s.storage, opinionID, userID, passages, state.Passage),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *server) handleRepairApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, r, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+
+	var request repairRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	userID, opinionID, err := s.requestIdentity(request.UserID, request.OpinionID)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	passageID, err := mvp.NewPassageID(request.PassageID)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	operation, err := parseBrowserRepairOperation(request.Operation, s.storage, opinionID, passageID)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	passages, err := listPassages(s.storage, opinionID)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	session, err := mvp.LoadOrStartAuditedPassageRepairSession(r.Context(), s.storage, opinionID, string(userID), "browser", passages)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	before := session.Current
+	if err := session.Apply(operation); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	if err := replacePassages(s.storage, opinionID, session.Current.Passages); err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	if err := mvp.RecordAuditedPassageRepairOperation(r.Context(), s.storage, string(userID), "browser", operation, before, session.Current, time.Now().UTC()); err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	focusPassageID := browserRepairFocusPassageID(operation, before, session.Current)
+	if _, err := mvp.OpenPassage(userID, focusPassageID, s.storage); err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(repairResponse{
+		PassageID: string(focusPassageID),
+		Revision:  session.Current.Revision,
+	})
+}
+
+func (s *server) handleRepairUndo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, r, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+
+	var request repairUndoRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	userID, opinionID, err := s.requestIdentity(request.UserID, request.OpinionID)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	passages, err := listPassages(s.storage, opinionID)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	session, err := mvp.LoadOrStartAuditedPassageRepairSession(r.Context(), s.storage, opinionID, string(userID), "browser", passages)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	if len(session.History) == 0 {
+		auditEntries, err := s.storage.ListPassageRepairAudit(r.Context(), opinionID, string(userID))
+		if err == nil {
+			session.History = historyEntriesToSessionHistory(auditEntries)
+		}
+	}
+	beforeUndo := session.Current
+	if err := session.Undo(); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	if err := replacePassages(s.storage, opinionID, session.Current.Passages); err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	target, _ := mvp.NewPassageRepairTarget(opinionID, []mvp.PassageID{session.Current.Passages[0].PassageID})
+	undoOperation, _ := mvp.NewAdminPassageOperation(mvp.AdminPassageOperationUndo, target, nil)
+	if err := mvp.RecordAuditedPassageRepairOperation(r.Context(), s.storage, string(userID), "browser", undoOperation, beforeUndo, session.Current, time.Now().UTC()); err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	if _, err := mvp.OpenPassage(userID, session.Current.Passages[0].PassageID, s.storage); err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(repairResponse{
+		PassageID: string(session.Current.Passages[0].PassageID),
+		Revision:  session.Current.Revision,
+	})
+}
+
+func (s *server) writeError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if s.logger != nil {
+		s.logger.Printf("status=%d method=%s path=%s err=%v", status, r.Method, r.URL.Path, err)
+	}
+	http.Error(w, err.Error(), status)
 }
 
 func (s *server) handleComplete(w http.ResponseWriter, r *http.Request) {
@@ -507,13 +688,23 @@ func (s *server) handleQuestion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	model, err := mvp.NewModel(defaultModelName, 8192)
+	answer, err := mvp.GuessAnswer(s.model, contextValue, question, mvp.SystemClock{})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	answer, err := mvp.GuessAnswer(model, contextValue, question, mvp.SystemClock{})
-	if err != nil {
+	if _, err := mvp.SaveAnswer(s.storage, answer); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	question.Status = mvp.QuestionStatusAnswered
+	if _, err := mvp.SaveQuestion(s.storage, question); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	progress.OpenQuestionIDs = removeQuestionID(progress.OpenQuestionIDs, question.QuestionID)
+	progress.UpdatedAt = time.Now().UTC()
+	if _, err := s.storage.SaveProgress(progress); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -663,6 +854,174 @@ func answerData(answer mvp.AnswerDraft) answerDTO {
 	}
 }
 
+func repairData(storage *mvp.SQLiteStorage, opinionID mvp.OpinionID, userID mvp.UserID, passages []mvp.Passage, focus mvp.Passage) repairDTO {
+	index := 0
+	for i, passage := range passages {
+		if passage.PassageID == focus.PassageID {
+			index = i
+			break
+		}
+	}
+	var previous *mvp.Passage
+	var next *mvp.Passage
+	if index > 0 {
+		previous = &passages[index-1]
+	}
+	if index+1 < len(passages) {
+		next = &passages[index+1]
+	}
+	issues, _ := mvp.ClassifyPassageIssues(focus, previous, next)
+	var entries []mvp.PassageRepairAuditEntry
+	if storage != nil {
+		entries, _ = storage.ListPassageRepairAudit(context.Background(), opinionID, string(userID))
+	}
+	history := make([]repairHistoryDTO, 0, len(entries))
+	for _, entry := range filterRepairAuditForPassage(entries, focus.PassageID) {
+		history = append(history, repairHistoryDTO{
+			Revision:      entry.Revision,
+			OperationKind: string(entry.OperationKind),
+			TargetPassage: string(entry.TargetPassageID),
+			CreatedAt:     entry.CreatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	issueData := make([]repairIssueDTO, 0, len(issues))
+	for _, issue := range issues {
+		issueData = append(issueData, repairIssueDTO{
+			Kind:    string(issue.Kind),
+			Summary: issue.Summary,
+		})
+	}
+	return repairDTO{
+		Issues:           issueData,
+		History:          history,
+		CanMergeNext:     next != nil,
+		CanMergePrevious: previous != nil,
+		CanSplitSentence: focus.SentenceStart < focus.SentenceEnd,
+		CanRemoveHeader:  hasRepairIssue(issues, mvp.PassageIssuePageHeaderArtifact),
+	}
+}
+
+func filterRepairAuditForPassage(entries []mvp.PassageRepairAuditEntry, focusPassageID mvp.PassageID) []mvp.PassageRepairAuditEntry {
+	filtered := make([]mvp.PassageRepairAuditEntry, 0, len(entries))
+	for _, entry := range entries {
+		if repairEntryTouchesPassage(entry, focusPassageID) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func repairEntryTouchesPassage(entry mvp.PassageRepairAuditEntry, focusPassageID mvp.PassageID) bool {
+	if entry.TargetPassageID == focusPassageID {
+		return true
+	}
+
+	switch entry.OperationKind {
+	case mvp.AdminPassageOperationMergeWithPrevious, mvp.AdminPassageOperationMoveFirstSentencePrev:
+		previousID, ok := previousPassageID(entry.Before.Passages, entry.TargetPassageID)
+		return ok && previousID == focusPassageID
+	case mvp.AdminPassageOperationMergeWithNext, mvp.AdminPassageOperationMoveLastSentenceNext:
+		nextID, ok := nextPassageID(entry.Before.Passages, entry.TargetPassageID)
+		return ok && nextID == focusPassageID
+	default:
+		return false
+	}
+}
+
+func previousPassageID(passages []mvp.Passage, target mvp.PassageID) (mvp.PassageID, bool) {
+	for index, passage := range passages {
+		if passage.PassageID == target && index > 0 {
+			return passages[index-1].PassageID, true
+		}
+	}
+	return "", false
+}
+
+func nextPassageID(passages []mvp.Passage, target mvp.PassageID) (mvp.PassageID, bool) {
+	for index, passage := range passages {
+		if passage.PassageID == target && index+1 < len(passages) {
+			return passages[index+1].PassageID, true
+		}
+	}
+	return "", false
+}
+
+func parseBrowserRepairOperation(action string, storage *mvp.SQLiteStorage, opinionID mvp.OpinionID, passageID mvp.PassageID) (mvp.AdminPassageOperation, error) {
+	target, err := mvp.NewPassageRepairTarget(opinionID, []mvp.PassageID{passageID})
+	if err != nil {
+		return mvp.AdminPassageOperation{}, err
+	}
+	switch strings.TrimSpace(action) {
+	case "mergeNext":
+		return mvp.NewAdminPassageOperation(mvp.AdminPassageOperationMergeWithNext, target, nil)
+	case "mergePrevious":
+		return mvp.NewAdminPassageOperation(mvp.AdminPassageOperationMergeWithPrevious, target, nil)
+	case "splitSentence":
+		record, err := storage.LoadPassage(passageID)
+		if err != nil {
+			return mvp.AdminPassageOperation{}, err
+		}
+		passage := record.(mvp.Passage)
+		splitAfter := passage.SentenceStart
+		return mvp.NewAdminPassageOperation(mvp.AdminPassageOperationSplitAtSentence, target, &splitAfter)
+	case "removeHeader":
+		return mvp.NewAdminPassageOperation(mvp.AdminPassageOperationRemoveRunningHeader, target, nil)
+	default:
+		return mvp.AdminPassageOperation{}, errors.New("unknown repair action")
+	}
+}
+
+func browserRepairFocusPassageID(operation mvp.AdminPassageOperation, before mvp.PassageRepairSnapshot, after mvp.PassageRepairSnapshot) mvp.PassageID {
+	targetID := operation.Target.PassageIDs[0]
+	for _, passage := range after.Passages {
+		if passage.PassageID == targetID {
+			return passage.PassageID
+		}
+	}
+
+	if operation.Kind == mvp.AdminPassageOperationMergeWithPrevious {
+		for index, passage := range before.Passages {
+			if passage.PassageID == targetID && index > 0 {
+				previousID := before.Passages[index-1].PassageID
+				for _, merged := range after.Passages {
+					if merged.PassageID == previousID {
+						return previousID
+					}
+				}
+			}
+		}
+	}
+
+	if len(after.Passages) > 0 {
+		return after.Passages[0].PassageID
+	}
+	return targetID
+}
+
+func historyEntriesToSessionHistory(entries []mvp.PassageRepairAuditEntry) []mvp.PassageRepairHistoryEntry {
+	out := make([]mvp.PassageRepairHistoryEntry, 0, len(entries))
+	for _, entry := range entries {
+		target, _ := mvp.NewPassageRepairTarget(entry.OpinionID, []mvp.PassageID{entry.TargetPassageID})
+		operation, _ := mvp.NewAdminPassageOperation(entry.OperationKind, target, entry.SplitAfterSentence)
+		out = append(out, mvp.PassageRepairHistoryEntry{
+			Revision:  entry.Revision,
+			Operation: operation,
+			Before:    entry.Before,
+			After:     entry.After,
+		})
+	}
+	return out
+}
+
+func hasRepairIssue(issues []mvp.PassageIssue, kind mvp.PassageIssueKind) bool {
+	for _, issue := range issues {
+		if issue.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 func loadQuestions(storage *mvp.SQLiteStorage, userID mvp.UserID, opinionID mvp.OpinionID) ([]mvp.Question, error) {
 	records, err := storage.LoadQuestions(userID, opinionID)
 	if err != nil {
@@ -704,6 +1063,18 @@ func listPassages(storage *mvp.SQLiteStorage, opinionID mvp.OpinionID) ([]mvp.Pa
 	return passages, nil
 }
 
+func replacePassages(storage *mvp.SQLiteStorage, opinionID mvp.OpinionID, passages []mvp.Passage) error {
+	rewriter, ok := any(storage).(mvp.PassageRewriter)
+	if !ok {
+		return mvp.ErrWrongRecordType
+	}
+	records := make([]mvp.PassageRecord, 0, len(passages))
+	for _, passage := range passages {
+		records = append(records, passage)
+	}
+	return rewriter.ReplacePassages(opinionID, records)
+}
+
 func containsQuestionID(ids []mvp.QuestionID, candidate mvp.QuestionID) bool {
 	for _, id := range ids {
 		if id == candidate {
@@ -711,4 +1082,15 @@ func containsQuestionID(ids []mvp.QuestionID, candidate mvp.QuestionID) bool {
 		}
 	}
 	return false
+}
+
+func removeQuestionID(ids []mvp.QuestionID, candidate mvp.QuestionID) []mvp.QuestionID {
+	filtered := make([]mvp.QuestionID, 0, len(ids))
+	for _, id := range ids {
+		if id == candidate {
+			continue
+		}
+		filtered = append(filtered, id)
+	}
+	return filtered
 }

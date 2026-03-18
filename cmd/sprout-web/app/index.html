@@ -14,7 +14,10 @@
           <h1 data-case-name>Loading opinion...</h1>
           <p class="identity-meta" data-identity-meta>Preparing browser reader state...</p>
         </div>
-        <div class="progress-chip" data-progress-chip>Bootstrapping</div>
+        <div class="passage-nav" aria-label="Passage navigation">
+          <button type="button" class="progress-chip progress-chip-secondary" data-previous-passage hidden>Previous</button>
+          <div class="progress-chip" data-progress-chip>Bootstrapping</div>
+        </div>
       </header>
 
       <main class="reading-room">
@@ -31,6 +34,7 @@
           <button type="button" class="action-button" data-panel="citation" data-citation-button>Reveal Citation</button>
           <button type="button" class="action-button" data-panel="question">Ask Question</button>
           <button type="button" class="action-button" data-panel="answer">Review Answer</button>
+          <button type="button" class="action-button" data-panel="repair" data-repair-button>Fix</button>
           <button type="button" class="action-button action-button-primary" data-continue-button>Continue</button>
         </nav>
 
@@ -65,6 +69,27 @@
             <p class="panel-body" data-answer-body>Answer review stays inside the workspace instead of navigating away from reading.</p>
             <ul class="citation-list" data-answer-evidence></ul>
             <p class="caveat" data-answer-caveat>Heuristic placeholder. Real data and answer flow come in later bones.</p>
+          </div>
+
+          <div class="panel-card" data-panel-view="repair" hidden>
+            <div class="panel-header">
+              <p class="panel-label">Passage Repair</p>
+              <button type="button" class="close-button" data-close-panel>Close</button>
+            </div>
+            <p class="panel-anchor" data-repair-anchor>Direct structural repairs only. No text editing.</p>
+            <div class="repair-actions">
+              <button type="button" class="action-button" data-repair-action="mergeNext">mergeNext</button>
+              <button type="button" class="action-button" data-repair-action="mergePrevious">mergePrevious</button>
+              <button type="button" class="action-button" data-repair-action="splitSentence">splitSentence</button>
+              <button type="button" class="action-button" data-repair-action="removeHeader">removeHeader</button>
+            </div>
+            <p class="panel-label repair-subhead">Issues</p>
+            <ul class="citation-list" data-repair-issues></ul>
+            <div class="repair-history-head">
+              <p class="panel-label repair-subhead">History</p>
+              <button type="button" class="action-button" data-repair-undo>Undo</button>
+            </div>
+            <ul class="citation-list" data-repair-history></ul>
           </div>
         </aside>
       </main>

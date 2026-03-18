@@ -125,3 +125,5 @@ func (d AnswerDraft) Validate() error {
 		return nil
 	}
 }
+
+func (AnswerDraft) AnswerRecord() {}

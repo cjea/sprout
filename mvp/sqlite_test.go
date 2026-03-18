@@ -32,6 +32,8 @@ func TestApplyMigrationsCreatesTables(t *testing.T) {
 		"progress",
 		"completed_passages",
 		"questions",
+		"answers",
+		"repair_audit",
 	}
 
 	for _, table := range tables {
@@ -66,8 +68,8 @@ func TestApplyMigrationsIsIdempotent(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("expected 1 applied migration, got %d", count)
+	if count != 3 {
+		t.Fatalf("expected 3 applied migrations, got %d", count)
 	}
 }
 
@@ -130,6 +132,11 @@ func TestSQLitePassageProgressAndQuestionRoundTrip(t *testing.T) {
 	if _, err := saveQuestion(storage, question); err != nil {
 		t.Fatalf("save question: %v", err)
 	}
+	evidence, _ := NewEvidence(anchor, "Passage 1", "selected passage")
+	answer, _ := NewAnswerDraft(questionID, "The standard is substantial evidence.", []Evidence{evidence}, []string{"Saved conversation."}, time.Now(), "gpt-5")
+	if _, err := saveAnswer(storage, answer); err != nil {
+		t.Fatalf("save answer: %v", err)
+	}
 
 	gotPassage, err := loadPassage(storage, current)
 	if err != nil {
@@ -153,6 +160,16 @@ func TestSQLitePassageProgressAndQuestionRoundTrip(t *testing.T) {
 	}
 	if len(questions) != 1 {
 		t.Fatalf("got %d questions, want 1", len(questions))
+	}
+	answers, err := loadAnswers(storage, userID, opinion.OpinionID)
+	if err != nil {
+		t.Fatalf("load answers: %v", err)
+	}
+	if len(answers) != 1 {
+		t.Fatalf("got %d answers, want 1", len(answers))
+	}
+	if answers[0].ModelName != "gpt-5" {
+		t.Fatalf("got model name %q, want gpt-5", answers[0].ModelName)
 	}
 }
 

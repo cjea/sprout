@@ -153,20 +153,30 @@ type QuestionRecord interface {
 	QuestionRecord()
 }
 
+type AnswerRecord interface {
+	AnswerRecord()
+}
+
 type Storage interface {
 	SaveRawPDF(RawPDFRecord) (RawPDFRecord, error)
 	SaveOpinion(OpinionRecord) (OpinionRecord, error)
 	SavePassages([]PassageRecord) ([]PassageRecord, error)
 	SaveProgress(ProgressRecord) (ProgressRecord, error)
 	SaveQuestionRecord(QuestionRecord) (QuestionRecord, error)
+	SaveAnswerRecord(AnswerRecord) (AnswerRecord, error)
 
 	LoadRawPDF(OpinionID) (RawPDFRecord, error)
 	LoadOpinion(OpinionID) (OpinionRecord, error)
 	LoadPassage(PassageID) (PassageRecord, error)
 	LoadProgress(UserID, OpinionID) (ProgressRecord, error)
 	LoadQuestions(UserID, OpinionID) ([]QuestionRecord, error)
+	LoadAnswers(UserID, OpinionID) ([]AnswerRecord, error)
 }
 
 type PassageLister interface {
 	ListPassages(OpinionID) ([]PassageRecord, error)
+}
+
+type PassageRewriter interface {
+	ReplacePassages(OpinionID, []PassageRecord) error
 }

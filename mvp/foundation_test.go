@@ -26,6 +26,10 @@ type fakeQuestion struct{}
 
 func (fakeQuestion) QuestionRecord() {}
 
+type fakeAnswer struct{}
+
+func (fakeAnswer) AnswerRecord() {}
+
 type fakeStorage struct{}
 
 func (fakeStorage) SaveRawPDF(record RawPDFRecord) (RawPDFRecord, error) {
@@ -48,6 +52,10 @@ func (fakeStorage) SaveQuestionRecord(record QuestionRecord) (QuestionRecord, er
 	return record, nil
 }
 
+func (fakeStorage) SaveAnswerRecord(record AnswerRecord) (AnswerRecord, error) {
+	return record, nil
+}
+
 func (fakeStorage) LoadRawPDF(OpinionID) (RawPDFRecord, error) {
 	return fakeRawPDF{}, nil
 }
@@ -66,6 +74,10 @@ func (fakeStorage) LoadProgress(UserID, OpinionID) (ProgressRecord, error) {
 
 func (fakeStorage) LoadQuestions(UserID, OpinionID) ([]QuestionRecord, error) {
 	return []QuestionRecord{fakeQuestion{}}, nil
+}
+
+func (fakeStorage) LoadAnswers(UserID, OpinionID) ([]AnswerRecord, error) {
+	return []AnswerRecord{fakeAnswer{}}, nil
 }
 
 func TestNewUserInput(t *testing.T) {
@@ -234,8 +246,9 @@ func TestMarkerInterfacesSatisfied(t *testing.T) {
 	var passage PassageRecord = fakePassage{}
 	var progress ProgressRecord = fakeProgress{}
 	var question QuestionRecord = fakeQuestion{}
+	var answer AnswerRecord = fakeAnswer{}
 
-	if raw == nil || opinion == nil || passage == nil || progress == nil || question == nil {
+	if raw == nil || opinion == nil || passage == nil || progress == nil || question == nil || answer == nil {
 		t.Fatalf("expected all fake records to satisfy their marker interfaces")
 	}
 }

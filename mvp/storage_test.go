@@ -41,6 +41,11 @@ func TestMemoryStorageRoundTrip(t *testing.T) {
 	if _, err := saveQuestion(storage, question); err != nil {
 		t.Fatalf("save question: %v", err)
 	}
+	evidence, _ := NewEvidence(anchor, "text", "selected passage")
+	answer, _ := NewAnswerDraft(questionID, "It means the court disagreed.", []Evidence{evidence}, []string{"saved"}, Timestamp{}, "heuristic-v1")
+	if _, err := saveAnswer(storage, answer); err != nil {
+		t.Fatalf("save answer: %v", err)
+	}
 
 	if _, err := loadOpinion(storage, opinionID); err != nil {
 		t.Fatalf("load opinion: %v", err)
@@ -57,5 +62,12 @@ func TestMemoryStorageRoundTrip(t *testing.T) {
 	}
 	if len(questions) != 1 {
 		t.Fatalf("got %d questions, want 1", len(questions))
+	}
+	answers, err := loadAnswers(storage, userID, opinionID)
+	if err != nil {
+		t.Fatalf("load answers: %v", err)
+	}
+	if len(answers) != 1 {
+		t.Fatalf("got %d answers, want 1", len(answers))
 	}
 }

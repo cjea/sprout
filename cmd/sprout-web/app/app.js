@@ -4,6 +4,7 @@ const openButtons = Array.from(document.querySelectorAll("[data-panel]"));
 const closeButtons = Array.from(document.querySelectorAll("[data-close-panel]"));
 const caseName = document.querySelector("[data-case-name]");
 const identityMeta = document.querySelector("[data-identity-meta]");
+const previousPassageButton = document.querySelector("[data-previous-passage]");
 const progressChip = document.querySelector("[data-progress-chip]");
 const passageHeading = document.querySelector("[data-passage-heading]");
 const passageMeta = document.querySelector("[data-passage-meta]");
@@ -19,10 +20,51 @@ const answerAnchor = document.querySelector("[data-answer-anchor]");
 const answerBody = document.querySelector("[data-answer-body]");
 const answerEvidence = document.querySelector("[data-answer-evidence]");
 const answerCaveat = document.querySelector("[data-answer-caveat]");
+const repairButton = document.querySelector("[data-repair-button]");
+const repairAnchor = document.querySelector("[data-repair-anchor]");
+const repairIssues = document.querySelector("[data-repair-issues]");
+const repairHistory = document.querySelector("[data-repair-history]");
+const repairUndo = document.querySelector("[data-repair-undo]");
+const repairActionButtons = Array.from(document.querySelectorAll("[data-repair-action]"));
 const footerCopy = document.querySelector("[data-footer-copy]");
 let readerState = null;
 let selectionState = { start: 0, end: 0, quote: "" };
 let answerState = null;
+
+function currentPassageIndex() {
+  if (!readerState) {
+    return -1;
+  }
+  return readerState.passages.findIndex((passage) => passage.passageId === readerState.passage.passageId);
+}
+
+function previousPassageId() {
+  const index = currentPassageIndex();
+  if (index <= 0) {
+    return "";
+  }
+  return readerState.passages[index - 1].passageId;
+}
+
+async function openPassage(passageId, { push = true, closePanel = false } = {}) {
+  const params = currentParams();
+  params.set("passage", passageId);
+  if (closePanel) {
+    params.delete("panel");
+    params.delete("citation");
+    params.delete("question");
+  }
+  params.delete("start");
+  params.delete("end");
+  selectionState = { start: 0, end: 0, quote: "" };
+  answerState = null;
+  if (push) {
+    pushParams(params);
+  } else {
+    replaceParams(params);
+  }
+  await loadReader();
+}
 
 function currentParams() {
   return new URLSearchParams(window.location.search);
@@ -106,7 +148,7 @@ async function loadReader() {
     readerState = { ...data };
     caseName.textContent = data.opinion.caseName;
     identityMeta.textContent = `${data.opinion.docket} · ${data.passage.sectionId} · ${data.passages.length} passages prepared`;
-    progressChip.textContent = `Current: ${data.progress.currentPassageId || data.passage.passageId}`;
+    progressChip.textContent = data.passage.passageId;
     passageHeading.textContent = `Section ${data.passage.sectionId}`;
     passageMeta.textContent = `Pages ${data.passage.pageStart}-${data.passage.pageEnd} · ${data.passage.citations.length} citations in view`;
     passageText.textContent = data.passage.text;
@@ -114,6 +156,7 @@ async function loadReader() {
     restoreSelection(params);
     renderQuestionPanel();
     renderAnswerPanel();
+    renderRepairPanel();
     citationList.innerHTML = "";
     for (const citation of data.passage.citations) {
       const item = document.createElement("li");
@@ -128,7 +171,17 @@ async function loadReader() {
       citationList.appendChild(item);
     }
     citationButton.disabled = data.passage.citations.length === 0;
-    const passageIndex = data.passages.findIndex((passage) => passage.passageId === data.passage.passageId);
+    const passageIndex = currentPassageIndex();
+    const previousId = previousPassageId();
+    if (previousId) {
+      previousPassageButton.hidden = false;
+      previousPassageButton.textContent = previousId;
+      previousPassageButton.disabled = false;
+    } else {
+      previousPassageButton.hidden = true;
+      previousPassageButton.textContent = "Previous";
+      previousPassageButton.disabled = true;
+    }
     const hasNextPassage = passageIndex >= 0 && passageIndex + 1 < data.passages.length;
     continueButton.disabled = !hasNextPassage;
     continueButton.textContent = hasNextPassage ? "Continue" : "End Of Opinion";
@@ -140,12 +193,18 @@ async function loadReader() {
     caseName.textContent = "Browser reader failed to load";
     identityMeta.textContent = "The shell is up, but the reader API did not return data.";
     progressChip.textContent = "Load error";
+    previousPassageButton.hidden = true;
+    previousPassageButton.disabled = true;
     passageHeading.textContent = "Reader unavailable";
     passageMeta.textContent = "Passage metadata unavailable.";
     passageText.textContent = String(error);
     citationAnchor.textContent = "No citation detail available.";
     citationList.innerHTML = "";
     citationButton.disabled = true;
+    if (repairButton) {
+      repairButton.disabled = true;
+    }
+    repairUndo.disabled = true;
     continueButton.disabled = true;
     continueButton.textContent = "Continue";
     questionSubmit.disabled = true;
@@ -172,23 +231,21 @@ continueButton.addEventListener("click", async () => {
   if (!readerState) {
     return;
   }
-  const passageIndex = readerState.passages.findIndex((passage) => passage.passageId === readerState.passage.passageId);
+  const passageIndex = currentPassageIndex();
   if (passageIndex < 0 || passageIndex + 1 >= readerState.passages.length) {
     return;
   }
   await completeCurrentPassage();
   const nextPassageId = readerState.passages[passageIndex + 1].passageId;
-  selectionState = { start: 0, end: 0, quote: "" };
-  answerState = null;
-  const params = currentParams();
-  params.set("passage", nextPassageId);
-  params.delete("panel");
-  params.delete("citation");
-  params.delete("question");
-  params.delete("start");
-  params.delete("end");
-  pushParams(params);
-  await loadReader();
+  await openPassage(nextPassageId, { push: true, closePanel: true });
+});
+
+previousPassageButton.addEventListener("click", async () => {
+  const previousId = previousPassageId();
+  if (!previousId) {
+    return;
+  }
+  await openPassage(previousId, { push: true });
 });
 
 function renderCitationPanel(citationId) {
@@ -233,6 +290,58 @@ function renderAnswerPanel() {
   answerCaveat.textContent = answerState.answer.caveats.join(" ") || `Model: ${answerState.answer.modelName}`;
 }
 
+function renderRepairPanel() {
+  if (!readerState) {
+    repairAnchor.textContent = "Repair tools unavailable.";
+    repairIssues.innerHTML = "";
+    repairHistory.innerHTML = "";
+    repairUndo.disabled = true;
+    for (const button of repairActionButtons) {
+      button.disabled = true;
+    }
+    return;
+  }
+
+  repairAnchor.textContent = `Passage ${readerState.passage.passageId}. Direct structural changes only.`;
+  repairIssues.innerHTML = "";
+  for (const issue of readerState.repair.issues) {
+    const item = document.createElement("li");
+    item.textContent = `${issue.kind}: ${issue.summary}`;
+    repairIssues.appendChild(item);
+  }
+  if (!readerState.repair.issues.length) {
+    const item = document.createElement("li");
+    item.textContent = "No classified issue for this passage right now.";
+    repairIssues.appendChild(item);
+  }
+
+  repairHistory.innerHTML = "";
+  for (const entry of readerState.repair.history.slice().reverse()) {
+    const item = document.createElement("li");
+    item.textContent = `r${entry.revision} ${entry.operationKind} on ${entry.targetPassage}`;
+    repairHistory.appendChild(item);
+  }
+  if (!readerState.repair.history.length) {
+    const item = document.createElement("li");
+    item.textContent = "No persisted repair history yet.";
+    repairHistory.appendChild(item);
+  }
+
+  const actionState = {
+    mergeNext: readerState.repair.canMergeNext,
+    mergePrevious: readerState.repair.canMergePrevious,
+    splitSentence: readerState.repair.canSplitSentence,
+    removeHeader: readerState.repair.canRemoveHeader,
+  };
+  for (const button of repairActionButtons) {
+    button.disabled = !actionState[button.dataset.repairAction];
+  }
+  repairUndo.disabled = readerState.repair.history.length === 0;
+  if (repairButton) {
+    repairButton.disabled = false;
+  }
+}
+
 function restoreSelection(params) {
   const start = Number(params.get("start"));
   const end = Number(params.get("end"));
@@ -259,7 +368,7 @@ function normalizePassageParams() {
 function restorePanelFromURL() {
   const params = currentParams();
   const panel = params.get("panel");
-  const validPanels = new Set(["citation", "question", "answer"]);
+  const validPanels = new Set(["citation", "question", "answer", "repair"]);
   if (!panel || !validPanels.has(panel)) {
     setPanel("", { push: false });
     return;
@@ -343,6 +452,60 @@ questionSubmit.addEventListener("click", async () => {
   params.set("question", answerState.question.questionId);
   pushParams(params);
   setPanel("answer", { push: false, questionId: answerState.question.questionId });
+  await loadReader();
+});
+
+for (const button of repairActionButtons) {
+  button.addEventListener("click", async () => {
+    if (!readerState) {
+      return;
+    }
+    const response = await fetch("/api/repair/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: readerState.progress.userId,
+        opinionId: readerState.opinion.opinionId,
+        passageId: readerState.passage.passageId,
+        operation: button.dataset.repairAction,
+      }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      repairAnchor.textContent = `Repair failed: ${response.status} ${message.trim()}`;
+      return;
+    }
+    const result = await response.json();
+    const params = currentParams();
+    params.set("passage", result.passageId);
+    params.set("panel", "repair");
+    pushParams(params);
+    await loadReader();
+  });
+}
+
+repairUndo.addEventListener("click", async () => {
+  if (!readerState) {
+    return;
+  }
+  const response = await fetch("/api/repair/undo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: readerState.progress.userId,
+      opinionId: readerState.opinion.opinionId,
+    }),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    repairAnchor.textContent = `Undo failed: ${response.status} ${message.trim()}`;
+    return;
+  }
+  const result = await response.json();
+  const params = currentParams();
+  params.set("passage", result.passageId);
+  params.set("panel", "repair");
+  pushParams(params);
   await loadReader();
 });
 

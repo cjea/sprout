@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +18,12 @@ import (
 
 //go:embed sql/schema/0001_init.sql
 var schema0001 string
+
+//go:embed sql/schema/0002_repair_audit.sql
+var schema0002 string
+
+//go:embed sql/schema/0003_answers.sql
+var schema0003 string
 
 var (
 	ErrMigrationVersionMissing = errors.New("migration version is required")
@@ -69,6 +76,8 @@ func (s *SQLiteStorage) Close() error {
 func DefaultMigrations() []Migration {
 	return []Migration{
 		{Version: "0001_init", SQL: schema0001},
+		{Version: "0002_repair_audit", SQL: schema0002},
+		{Version: "0003_answers", SQL: schema0003},
 	}
 }
 
@@ -220,6 +229,17 @@ func (s *SQLiteStorage) SaveQuestionRecord(record QuestionRecord) (QuestionRecor
 	return question, nil
 }
 
+func (s *SQLiteStorage) SaveAnswerRecord(record AnswerRecord) (AnswerRecord, error) {
+	answer, err := answerFromRecord(record)
+	if err != nil {
+		return nil, err
+	}
+	if err := saveAnswerExec(context.Background(), s.db, answer); err != nil {
+		return nil, err
+	}
+	return answer, nil
+}
+
 func (s *SQLiteStorage) LoadRawPDF(opinionID OpinionID) (RawPDFRecord, error) {
 	return loadRawPDFExec(context.Background(), s.db, opinionID)
 }
@@ -248,6 +268,18 @@ func (s *SQLiteStorage) LoadQuestions(userID UserID, opinionID OpinionID) ([]Que
 	return out, nil
 }
 
+func (s *SQLiteStorage) LoadAnswers(userID UserID, opinionID OpinionID) ([]AnswerRecord, error) {
+	answers, err := loadAnswersExec(context.Background(), s.db, userID, opinionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AnswerRecord, 0, len(answers))
+	for _, answer := range answers {
+		out = append(out, answer)
+	}
+	return out, nil
+}
+
 func (s *SQLiteStorage) ListPassages(opinionID OpinionID) ([]PassageRecord, error) {
 	passages, err := listPassagesExec(context.Background(), s.db, opinionID)
 	if err != nil {
@@ -258,6 +290,18 @@ func (s *SQLiteStorage) ListPassages(opinionID OpinionID) ([]PassageRecord, erro
 		out = append(out, passage)
 	}
 	return out, nil
+}
+
+func (s *SQLiteStorage) ReplacePassages(opinionID OpinionID, records []PassageRecord) error {
+	passages := make([]Passage, 0, len(records))
+	for _, record := range records {
+		passage, err := passageFromRecord(record)
+		if err != nil {
+			return err
+		}
+		passages = append(passages, passage)
+	}
+	return replacePassagesExec(context.Background(), s.db, opinionID, passages)
 }
 
 func (s *sqliteTxStorage) SaveRawPDF(record RawPDFRecord) (RawPDFRecord, error) {
@@ -323,6 +367,17 @@ func (s *sqliteTxStorage) SaveQuestionRecord(record QuestionRecord) (QuestionRec
 	return question, nil
 }
 
+func (s *sqliteTxStorage) SaveAnswerRecord(record AnswerRecord) (AnswerRecord, error) {
+	answer, err := answerFromRecord(record)
+	if err != nil {
+		return nil, err
+	}
+	if err := saveAnswerExec(context.Background(), s.tx, answer); err != nil {
+		return nil, err
+	}
+	return answer, nil
+}
+
 func (s *sqliteTxStorage) LoadRawPDF(opinionID OpinionID) (RawPDFRecord, error) {
 	return loadRawPDFExec(context.Background(), s.tx, opinionID)
 }
@@ -351,6 +406,18 @@ func (s *sqliteTxStorage) LoadQuestions(userID UserID, opinionID OpinionID) ([]Q
 	return out, nil
 }
 
+func (s *sqliteTxStorage) LoadAnswers(userID UserID, opinionID OpinionID) ([]AnswerRecord, error) {
+	answers, err := loadAnswersExec(context.Background(), s.tx, userID, opinionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AnswerRecord, 0, len(answers))
+	for _, answer := range answers {
+		out = append(out, answer)
+	}
+	return out, nil
+}
+
 func (s *sqliteTxStorage) ListPassages(opinionID OpinionID) ([]PassageRecord, error) {
 	passages, err := listPassagesExec(context.Background(), s.tx, opinionID)
 	if err != nil {
@@ -361,6 +428,18 @@ func (s *sqliteTxStorage) ListPassages(opinionID OpinionID) ([]PassageRecord, er
 		out = append(out, passage)
 	}
 	return out, nil
+}
+
+func (s *sqliteTxStorage) ReplacePassages(opinionID OpinionID, records []PassageRecord) error {
+	passages := make([]Passage, 0, len(records))
+	for _, record := range records {
+		passage, err := passageFromRecord(record)
+		if err != nil {
+			return err
+		}
+		passages = append(passages, passage)
+	}
+	return replacePassagesExec(context.Background(), s.tx, opinionID, passages)
 }
 
 func saveRawPDFExec(ctx context.Context, exec sqliteExecutor, raw RawPDF) error {
@@ -436,6 +515,13 @@ func savePassagesExec(ctx context.Context, exec sqliteExecutor, passages []Passa
 	return nil
 }
 
+func replacePassagesExec(ctx context.Context, exec sqliteExecutor, opinionID OpinionID, passages []Passage) error {
+	if _, err := exec.ExecContext(ctx, `DELETE FROM passages WHERE opinion_id = ?`, opinionID); err != nil {
+		return err
+	}
+	return savePassagesExec(ctx, exec, passages)
+}
+
 func saveProgressExec(ctx context.Context, exec sqliteExecutor, progress Progress) error {
 	if _, err := exec.ExecContext(ctx, `
 		INSERT INTO progress(user_id, opinion_id, current_passage_id, updated_at)
@@ -476,6 +562,28 @@ func saveQuestionExec(ctx context.Context, exec sqliteExecutor, question Questio
 			asked_at = excluded.asked_at,
 			status = excluded.status
 	`, question.QuestionID, question.UserID, question.Anchor.OpinionID, question.Anchor.SectionID, question.Anchor.PassageID, question.Anchor.Span.StartOffset, question.Anchor.Span.EndOffset, question.Anchor.Span.Quote, question.Text, question.AskedAt.UTC().Format(time.RFC3339Nano), question.Status.String())
+	return err
+}
+
+func saveAnswerExec(ctx context.Context, exec sqliteExecutor, answer AnswerDraft) error {
+	evidenceJSON, err := json.Marshal(answer.Evidence)
+	if err != nil {
+		return err
+	}
+	caveatsJSON, err := json.Marshal(answer.Caveats)
+	if err != nil {
+		return err
+	}
+	_, err = exec.ExecContext(ctx, `
+		INSERT INTO answers(question_id, answer, evidence_json, caveats_json, generated_at, model_name)
+		VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(question_id) DO UPDATE SET
+			answer = excluded.answer,
+			evidence_json = excluded.evidence_json,
+			caveats_json = excluded.caveats_json,
+			generated_at = excluded.generated_at,
+			model_name = excluded.model_name
+	`, answer.QuestionID, answer.Answer, string(evidenceJSON), string(caveatsJSON), answer.GeneratedAt.UTC().Format(time.RFC3339Nano), answer.ModelName)
 	return err
 }
 
@@ -692,6 +800,49 @@ func loadQuestionsExec(ctx context.Context, exec sqliteExecutor, userID UserID, 
 		return nil, ErrNotFound
 	}
 	return questions, nil
+}
+
+func loadAnswersExec(ctx context.Context, exec sqliteExecutor, userID UserID, opinionID OpinionID) ([]AnswerDraft, error) {
+	rows, err := exec.QueryContext(ctx, `
+		SELECT a.question_id, a.answer, a.evidence_json, a.caveats_json, a.generated_at, a.model_name
+		FROM answers a
+		JOIN questions q ON q.question_id = a.question_id
+		WHERE q.user_id = ? AND q.opinion_id = ?
+		ORDER BY q.asked_at ASC
+	`, userID, opinionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var answers []AnswerDraft
+	for rows.Next() {
+		var answer AnswerDraft
+		var evidenceJSON string
+		var caveatsJSON string
+		var generatedAt string
+		if err := rows.Scan(&answer.QuestionID, &answer.Answer, &evidenceJSON, &caveatsJSON, &generatedAt, &answer.ModelName); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(evidenceJSON), &answer.Evidence); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(caveatsJSON), &answer.Caveats); err != nil {
+			return nil, err
+		}
+		answer.GeneratedAt, err = time.Parse(time.RFC3339Nano, generatedAt)
+		if err != nil {
+			return nil, err
+		}
+		answers = append(answers, answer)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(answers) == 0 {
+		return nil, ErrNotFound
+	}
+	return answers, nil
 }
 
 func derefJustice(value *JusticeName) any {

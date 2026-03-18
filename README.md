@@ -9,7 +9,7 @@ What works today:
 - parse sections and chunk them into bite-sized passages
 - inspect stored opinions, passages, and progress
 - resume the current passage for a user
-- ask a span-anchored question and get a heuristic `guessAnswer`
+- ask a span-anchored question and get a saved `guessAnswer`, with optional real model backing
 - open a browser app shell that matches the current UX, IA, flow, responsive, and routing specs
 
 The current target opinion is:
@@ -122,6 +122,28 @@ GOCACHE=$(pwd)/.gocache go run ./cmd/sprout ask \
 
 `ask` saves the question first, then builds context from the stored opinion, passage, citations, and open questions, and finally runs the heuristic `guessAnswer`.
 
+To use a real model-backed `guessAnswer`, set:
+
+```sh
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://api.openai.com
+```
+
+Then choose a non-heuristic model name, for example:
+
+```sh
+GOCACHE=$(pwd)/.gocache go run ./cmd/sprout ask \
+  --db var/sprout.db \
+  --user demo \
+  --passage-id <passage-id> \
+  --start 0 \
+  --end 32 \
+  --question "What does 'compel a contrary finding' mean in this case?" \
+  --model gpt-4.1-mini
+```
+
+When no provider is configured, `guessAnswer` falls back to the local heuristic path.
+
 ## Browser Shell
 
 Run the browser shell:
@@ -150,8 +172,16 @@ Current browser capabilities:
 - render the current passage and passage metadata
 - advance through real generated passages
 - open citation detail without leaving the reading workspace
-- select passage text, submit a question, and review a heuristic answer
+- select passage text, submit a question, and review a guessed answer
 - keep passage and panel state in the URL enough to support refresh and basic back/forward navigation
+
+The browser server uses the same optional provider-backed `guessAnswer` path. For example:
+
+```sh
+OPENAI_API_KEY=... \
+OPENAI_BASE_URL=https://api.openai.com \
+GOCACHE=$(pwd)/.gocache go run ./cmd/sprout-web --addr :8080 --model gpt-4.1-mini
+```
 
 Useful browser URL shapes:
 
@@ -160,6 +190,20 @@ http://localhost:8080/?passage=<passage-id>
 http://localhost:8080/?passage=<passage-id>&panel=citation
 http://localhost:8080/?passage=<passage-id>&panel=question&start=0&end=32
 ```
+
+## Admin Repair
+
+The current admin/operator guide for passage repair is:
+
+- [ADMIN_PASSAGE_REPAIR.md](/Users/babe/code/sprout/ADMIN_PASSAGE_REPAIR.md)
+
+That document covers the current repair subsystem, source-fidelity rules, primitive structural operations, and the current admin CLI commands:
+
+- `repair-case`
+- `repair-issues`
+- `repair-apply`
+- `repair-history`
+- `repair-undo`
 
 ## Scripts
 

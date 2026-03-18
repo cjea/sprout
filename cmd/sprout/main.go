@@ -48,6 +48,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCompletePassage(args[1:], stdout, stderr)
 	case "ask":
 		return runAsk(args[1:], stdout, stderr)
+	case "repair-case":
+		return runRepairCase(args[1:], stdout, stderr)
+	case "repair-issues":
+		return runRepairIssues(args[1:], stdout, stderr)
+	case "repair-apply":
+		return runRepairApply(args[1:], stdout, stderr)
+	case "repair-history":
+		return runRepairHistory(args[1:], stdout, stderr)
+	case "repair-undo":
+		return runRepairUndo(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -444,6 +454,14 @@ func runAsk(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
+	answer, err = mvp.SaveAnswer(storage, answer)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	question.Status = mvp.QuestionStatusAnswered
+	if _, err := mvp.SaveQuestion(storage, question); err != nil {
+		return fail(stderr, err)
+	}
 
 	fmt.Fprintf(stdout, "question_id=%s\nanswer=%q\n", answer.QuestionID, answer.Answer)
 	for _, evidence := range answer.Evidence {
@@ -452,6 +470,241 @@ func runAsk(args []string, stdout, stderr io.Writer) int {
 	for _, caveat := range answer.Caveats {
 		fmt.Fprintf(stdout, "caveat=%q\n", caveat)
 	}
+	return 0
+}
+
+func runRepairCase(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("repair-case", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dbPath := flags.String("db", "var/sprout.db", "sqlite database path")
+	opinionValue := flags.String("opinion-id", "", "opinion id")
+	passageValue := flags.String("passage-id", "", "focus passage id")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	opinionID, err := mvp.NewOpinionID(*opinionValue)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	passageID, err := mvp.NewPassageID(*passageValue)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	storage, err := openStorage(*dbPath)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	defer storage.Close()
+
+	passages, err := listPassages(storage, opinionID)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	snapshot, _, err := buildRepairSnapshot(passages, opinionID)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	focusIndex, err := findPassageIndex(snapshot.Passages, passageID)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	repairCase, err := mvp.OpenPassageRepairCase(snapshot, passageID)
+	if err != nil {
+		return fail(stderr, err)
+	}
+
+	var previous *mvp.Passage
+	var next *mvp.Passage
+	if focusIndex > 0 {
+		previous = &snapshot.Passages[focusIndex-1]
+	}
+	if focusIndex+1 < len(snapshot.Passages) {
+		next = &snapshot.Passages[focusIndex+1]
+	}
+	issues, err := mvp.ClassifyPassageIssues(snapshot.Passages[focusIndex], previous, next)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	repairCase = mvp.ClassifyPassageRepairCase(repairCase, issues)
+
+	fmt.Fprintf(stdout, "repair_session=%s\nstage=%s\nfocus_passage_id=%s\n", repairCase.SessionID, repairCase.Stage, repairCase.FocusPassageID)
+	printRepairContext(stdout, "previous", previous)
+	printRepairContext(stdout, "current", &snapshot.Passages[focusIndex])
+	printRepairContext(stdout, "next", next)
+	for _, issue := range repairCase.Issues {
+		fmt.Fprintf(stdout, "issue kind=%s summary=%q passage_id=%s\n", issue.Kind, issue.Summary, issue.PassageID)
+	}
+	return 0
+}
+
+func runRepairIssues(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("repair-issues", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dbPath := flags.String("db", "var/sprout.db", "sqlite database path")
+	opinionValue := flags.String("opinion-id", "", "opinion id")
+	passageValue := flags.String("passage-id", "", "optional focus passage id")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	opinionID, err := mvp.NewOpinionID(*opinionValue)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	var focusPassageID mvp.PassageID
+	if strings.TrimSpace(*passageValue) != "" {
+		focusPassageID, err = mvp.NewPassageID(*passageValue)
+		if err != nil {
+			return fail(stderr, err)
+		}
+	}
+
+	storage, err := openStorage(*dbPath)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	defer storage.Close()
+
+	passages, err := listPassages(storage, opinionID)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	for index, passage := range passages {
+		if focusPassageID != "" && passage.PassageID != focusPassageID {
+			continue
+		}
+		var previous *mvp.Passage
+		var next *mvp.Passage
+		if index > 0 {
+			previous = &passages[index-1]
+		}
+		if index+1 < len(passages) {
+			next = &passages[index+1]
+		}
+		issues, err := mvp.ClassifyPassageIssues(passage, previous, next)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		fmt.Fprintf(stdout, "passage_id=%s issue_count=%d\n", passage.PassageID, len(issues))
+		for _, issue := range issues {
+			fmt.Fprintf(stdout, "issue kind=%s summary=%q passage_id=%s\n", issue.Kind, issue.Summary, issue.PassageID)
+		}
+	}
+	return 0
+}
+
+func runRepairApply(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("repair-apply", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dbPath := flags.String("db", "var/sprout.db", "sqlite database path")
+	opinionValue := flags.String("opinion-id", "", "opinion id")
+	passageValue := flags.String("passage-id", "", "focus passage id")
+	operationValue := flags.String("op", "", "repair operation kind")
+	splitAfterValue := flags.Int("split-after", -1, "absolute sentence number after which to split")
+	sessionFile := flags.String("session-file", "", "repair session file path")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	opinionID, passageID, operationKind, splitAfter, err := parseRepairApplyInputs(*opinionValue, *passageValue, *operationValue, *splitAfterValue)
+	if err != nil {
+		return fail(stderr, err)
+	}
+
+	storage, err := openStorage(*dbPath)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	defer storage.Close()
+
+	sessionStore := newRepairSessionStore(*sessionFile, *dbPath, opinionID)
+	session, err := loadOrCreateRepairSession(sessionStore, storage, opinionID)
+	if err != nil {
+		return fail(stderr, err)
+	}
+
+	target, err := mvp.NewPassageRepairTarget(opinionID, []mvp.PassageID{passageID})
+	if err != nil {
+		return fail(stderr, err)
+	}
+	operation, err := mvp.NewAdminPassageOperation(operationKind, target, splitAfter)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if err := session.Apply(operation); err != nil {
+		return fail(stderr, err)
+	}
+	if err := replacePassages(storage, opinionID, session.Current.Passages); err != nil {
+		return fail(stderr, err)
+	}
+	if err := sessionStore.SavePassageRepairSession(session); err != nil {
+		return fail(stderr, err)
+	}
+	fmt.Fprintf(stdout, "repair_session=%s\nrevision=%d\noperation=%s\npassages=%d\n", session.Current.SessionID, session.Current.Revision, operation.Kind, len(session.Current.Passages))
+	return 0
+}
+
+func runRepairHistory(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("repair-history", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dbPath := flags.String("db", "var/sprout.db", "sqlite database path")
+	opinionValue := flags.String("opinion-id", "", "opinion id")
+	sessionFile := flags.String("session-file", "", "repair session file path")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	opinionID, err := mvp.NewOpinionID(*opinionValue)
+	if err != nil {
+		return fail(stderr, err)
+	}
+
+	sessionStore := newRepairSessionStore(*sessionFile, *dbPath, opinionID)
+	session, err := sessionStore.LoadPassageRepairSession()
+	if err != nil {
+		return fail(stderr, err)
+	}
+	fmt.Fprintf(stdout, "repair_session=%s\ncurrent_revision=%d\nhistory=%d\n", session.Current.SessionID, session.Current.Revision, len(session.History))
+	for _, entry := range session.History {
+		fmt.Fprintf(stdout, "revision=%d operation=%s before=%d after=%d\n", entry.Revision, entry.Operation.Kind, entry.Before.Revision, entry.After.Revision)
+	}
+	return 0
+}
+
+func runRepairUndo(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("repair-undo", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dbPath := flags.String("db", "var/sprout.db", "sqlite database path")
+	opinionValue := flags.String("opinion-id", "", "opinion id")
+	sessionFile := flags.String("session-file", "", "repair session file path")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	opinionID, err := mvp.NewOpinionID(*opinionValue)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	storage, err := openStorage(*dbPath)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	defer storage.Close()
+
+	sessionStore := newRepairSessionStore(*sessionFile, *dbPath, opinionID)
+	session, err := sessionStore.LoadPassageRepairSession()
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if err := session.Undo(); err != nil {
+		return fail(stderr, err)
+	}
+	if err := replacePassages(storage, opinionID, session.Current.Passages); err != nil {
+		return fail(stderr, err)
+	}
+	if err := sessionStore.SavePassageRepairSession(session); err != nil {
+		return fail(stderr, err)
+	}
+	fmt.Fprintf(stdout, "repair_session=%s\nrevision=%d\npassages=%d\n", session.Current.SessionID, session.Current.Revision, len(session.Current.Passages))
 	return 0
 }
 
@@ -538,6 +791,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  read               Resume the current passage for a user and opinion")
 	fmt.Fprintln(w, "  complete-passage   Mark a passage complete for a user")
 	fmt.Fprintln(w, "  ask                Save a question against a span and print a guessed answer")
+	fmt.Fprintln(w, "  repair-case        Open an admin passage repair case and inspect context")
+	fmt.Fprintln(w, "  repair-issues      Classify passage issues for one passage or an opinion")
+	fmt.Fprintln(w, "  repair-apply       Apply one primitive admin repair operation")
+	fmt.Fprintln(w, "  repair-history     Print persisted admin repair history")
+	fmt.Fprintln(w, "  repair-undo        Undo the last persisted admin repair operation")
 }
 
 func fail(stderr io.Writer, err error) int {
@@ -620,6 +878,97 @@ func listPassages(storage *mvp.SQLiteStorage, opinionID mvp.OpinionID) ([]mvp.Pa
 		return passages[i].PassageID < passages[j].PassageID
 	})
 	return passages, nil
+}
+
+func buildRepairSnapshot(passages []mvp.Passage, opinionID mvp.OpinionID) (mvp.PassageRepairSnapshot, map[mvp.PassageID]int, error) {
+	index := make(map[mvp.PassageID]int, len(passages))
+	for i, passage := range passages {
+		index[passage.PassageID] = i
+	}
+	snapshot, err := mvp.NewPassageRepairSnapshot("cli-repair-session", 0, opinionID, passages, nil)
+	if err != nil {
+		return mvp.PassageRepairSnapshot{}, nil, err
+	}
+	return snapshot, index, nil
+}
+
+func findPassageIndex(passages []mvp.Passage, passageID mvp.PassageID) (int, error) {
+	for i, passage := range passages {
+		if passage.PassageID == passageID {
+			return i, nil
+		}
+	}
+	return -1, mvp.ErrNotFound
+}
+
+func printRepairContext(stdout io.Writer, label string, passage *mvp.Passage) {
+	if passage == nil {
+		fmt.Fprintf(stdout, "%s_passage_id=\n", label)
+		return
+	}
+	fmt.Fprintf(stdout, "%s_passage_id=%s\n", label, passage.PassageID)
+	fmt.Fprintf(stdout, "%s_sentences=%d-%d\n", label, passage.SentenceStart, passage.SentenceEnd)
+	fmt.Fprintf(stdout, "%s_text=%q\n", label, passage.Text)
+}
+
+func parseRepairApplyInputs(opinionValue, passageValue, operationValue string, splitAfterValue int) (mvp.OpinionID, mvp.PassageID, mvp.AdminPassageOperationKind, *mvp.SentenceNo, error) {
+	opinionID, err := mvp.NewOpinionID(opinionValue)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	passageID, err := mvp.NewPassageID(passageValue)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	operationKind, err := mvp.ParseAdminPassageOperationKind(operationValue)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	var splitAfter *mvp.SentenceNo
+	if splitAfterValue >= 0 {
+		value := mvp.SentenceNo(splitAfterValue)
+		splitAfter = &value
+	}
+	return opinionID, passageID, operationKind, splitAfter, nil
+}
+
+func newRepairSessionStore(sessionFile, dbPath string, opinionID mvp.OpinionID) mvp.JSONPassageRepairSessionStore {
+	path := sessionFile
+	if strings.TrimSpace(path) == "" {
+		path = dbPath + "." + string(opinionID) + ".repair.json"
+	}
+	return mvp.JSONPassageRepairSessionStore{Path: path}
+}
+
+func loadOrCreateRepairSession(sessionStore mvp.JSONPassageRepairSessionStore, storage *mvp.SQLiteStorage, opinionID mvp.OpinionID) (*mvp.PassageRepairSession, error) {
+	session, err := sessionStore.LoadPassageRepairSession()
+	if err == nil {
+		return session, nil
+	}
+	if !errors.Is(err, mvp.ErrNotFound) {
+		return nil, err
+	}
+	passages, err := listPassages(storage, opinionID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, _, err := buildRepairSnapshot(passages, opinionID)
+	if err != nil {
+		return nil, err
+	}
+	return mvp.NewPassageRepairSession(snapshot)
+}
+
+func replacePassages(storage *mvp.SQLiteStorage, opinionID mvp.OpinionID, passages []mvp.Passage) error {
+	rewriter, ok := any(storage).(mvp.PassageRewriter)
+	if !ok {
+		return mvp.ErrWrongRecordType
+	}
+	records := make([]mvp.PassageRecord, 0, len(passages))
+	for _, passage := range passages {
+		records = append(records, passage)
+	}
+	return rewriter.ReplacePassages(opinionID, records)
 }
 
 func timeLayout() string {

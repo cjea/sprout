@@ -1,7 +1,6 @@
 package mvp
 
 import (
-	stdcontext "context"
 	"errors"
 	"fmt"
 	"strings"
@@ -119,9 +118,8 @@ func GatherContext(opinion Opinion, passage Passage, anchor Anchor, openQuestion
 	return NewContext(opinion, passage, anchor, openQuestions, passage.Citations)
 }
 
-func GuessAnswer(model Model, context Context, question Question, clock Clock) (AnswerDraft, error) {
-	guesser := HeuristicAnswerGuesser{Model: model, Clock: clock}
-	return guesser.GuessAnswer(stdcontext.Background(), context, question)
+func SaveAnswer(storage Storage, answer AnswerDraft) (AnswerDraft, error) {
+	return saveAnswer(storage, answer)
 }
 
 func containsPassageID(ids []PassageID, candidate PassageID) bool {

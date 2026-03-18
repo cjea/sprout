@@ -154,3 +154,123 @@ func TestCleanPassageSourceTextAgainstQualityCorpusCleanupCases(t *testing.T) {
 		})
 	}
 }
+
+func TestChunkSectionsRepairsKnownHyphenationArtifactsOnRealFixture(t *testing.T) {
+	fixture := loadRealFixturePDF(t)
+
+	opinionID, err := MakeOpinionID(fixture.SourceURL)
+	if err != nil {
+		t.Fatalf("make opinion id: %v", err)
+	}
+	raw, err := MakeRawPDF(opinionID, fixture.SourceURL, fixture.Bytes, fixture.FetchedAt)
+	if err != nil {
+		t.Fatalf("make raw pdf: %v", err)
+	}
+	parsed, err := ParsePDF(raw)
+	if err != nil {
+		t.Fatalf("parse pdf: %v", err)
+	}
+	sections, err := GuessSections(Model{Name: "heuristic-v1", MaxContextTokens: 8192}, parsed)
+	if err != nil {
+		t.Fatalf("guess sections: %v", err)
+	}
+	passages, err := ChunkSections(DefaultChunkPolicy(), sections)
+	if err != nil {
+		t.Fatalf("chunk sections: %v", err)
+	}
+
+	banned := []string{
+		"asy-lum",
+		"refu-gee",
+		"ac-count",
+		"per-secution",
+		"pre-scribe",
+		"rea-sonable",
+		"de-termination",
+		"con-stitute",
+		"or-dered",
+		"ei-ther",
+		"underly-ing",
+		"signifi-cant",
+		"subpar-agraph",
+		"partic-ular",
+		"pri-marily",
+		"re-view",
+		"noncit-izen",
+		"noncit- izen",
+		"Zac- arias",
+		"Zac-arias",
+	}
+	allowed := []string{
+		"substantial-evidence",
+		"well-founded",
+	}
+
+	for _, passage := range passages {
+		text := string(passage.Text)
+		for _, needle := range banned {
+			if strings.Contains(text, needle) {
+				t.Fatalf("passage %s still contains hyphenation artifact %q: %q", passage.PassageID, needle, text)
+			}
+		}
+	}
+
+	fullText := make([]string, 0, len(passages))
+	for _, passage := range passages {
+		fullText = append(fullText, string(passage.Text))
+	}
+	joined := strings.Join(fullText, " ")
+	for _, needle := range allowed {
+		if !strings.Contains(joined, needle) {
+			t.Fatalf("expected legitimate compound %q to remain present", needle)
+		}
+	}
+}
+
+func TestChunkSectionsRepairsKnownJoinedWordArtifactsOnRealFixture(t *testing.T) {
+	fixture := loadRealFixturePDF(t)
+
+	opinionID, err := MakeOpinionID(fixture.SourceURL)
+	if err != nil {
+		t.Fatalf("make opinion id: %v", err)
+	}
+	raw, err := MakeRawPDF(opinionID, fixture.SourceURL, fixture.Bytes, fixture.FetchedAt)
+	if err != nil {
+		t.Fatalf("make raw pdf: %v", err)
+	}
+	parsed, err := ParsePDF(raw)
+	if err != nil {
+		t.Fatalf("parse pdf: %v", err)
+	}
+	sections, err := GuessSections(Model{Name: "heuristic-v1", MaxContextTokens: 8192}, parsed)
+	if err != nil {
+		t.Fatalf("guess sections: %v", err)
+	}
+	passages, err := ChunkSections(DefaultChunkPolicy(), sections)
+	if err != nil {
+		t.Fatalf("chunk sections: %v", err)
+	}
+
+	banned := []string{
+		"socialgroup",
+		"butconcluded",
+		"applicationof",
+		"concludingthat",
+		"appropriatestandard",
+		"substantial-evidencestandard",
+		"reviewof",
+		"thatCongress",
+		"receivedeference",
+		"thejudgment",
+		"de 6novo",
+	}
+
+	for _, passage := range passages {
+		text := string(passage.Text)
+		for _, needle := range banned {
+			if strings.Contains(text, needle) {
+				t.Fatalf("passage %s still contains joined-word artifact %q: %q", passage.PassageID, needle, text)
+			}
+		}
+	}
+}

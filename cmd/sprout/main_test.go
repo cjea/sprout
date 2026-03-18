@@ -120,6 +120,133 @@ func TestAskCommand(t *testing.T) {
 	}
 }
 
+func TestRepairCaseCommand(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "sprout.db")
+	runOK(t, "init-db", "--db", dbPath)
+	runOK(t,
+		"ingest-file",
+		"--db", dbPath,
+		"--user", "demo",
+		"--file", mustFixturePath(t),
+		"--url", fixtureURL,
+	)
+
+	storage, err := openStorage(dbPath)
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer storage.Close()
+
+	passages, err := listPassages(storage, mvp.OpinionID("24-777_9ol1"))
+	if err != nil {
+		t.Fatalf("list passages: %v", err)
+	}
+	if len(passages) < 2 {
+		t.Fatalf("expected at least two passages")
+	}
+
+	output := runOK(t,
+		"repair-case",
+		"--db", dbPath,
+		"--opinion-id", "24-777_9ol1",
+		"--passage-id", string(passages[1].PassageID),
+	)
+	if !strings.Contains(output, "stage=apply_operation") {
+		t.Fatalf("repair-case output missing stage: %s", output)
+	}
+	if !strings.Contains(output, "current_passage_id="+string(passages[1].PassageID)) {
+		t.Fatalf("repair-case output missing current passage: %s", output)
+	}
+	if !strings.Contains(output, "previous_passage_id=") {
+		t.Fatalf("repair-case output missing previous passage context: %s", output)
+	}
+	if !strings.Contains(output, "next_passage_id=") {
+		t.Fatalf("repair-case output missing next passage context: %s", output)
+	}
+}
+
+func TestRepairIssueApplyHistoryAndUndoCommands(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "sprout.db")
+	runOK(t, "init-db", "--db", dbPath)
+	runOK(t,
+		"ingest-file",
+		"--db", dbPath,
+		"--user", "demo",
+		"--file", mustFixturePath(t),
+		"--url", fixtureURL,
+	)
+
+	storage, err := openStorage(dbPath)
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	defer storage.Close()
+
+	passages, err := listPassages(storage, mvp.OpinionID("24-777_9ol1"))
+	if err != nil {
+		t.Fatalf("list passages: %v", err)
+	}
+	if len(passages) < 2 {
+		t.Fatalf("expected at least two passages")
+	}
+	originalCount := len(passages)
+
+	issuesOutput := runOK(t,
+		"repair-issues",
+		"--db", dbPath,
+		"--opinion-id", "24-777_9ol1",
+		"--passage-id", string(passages[0].PassageID),
+	)
+	if !strings.Contains(issuesOutput, "issue_count=") {
+		t.Fatalf("repair-issues output missing issue_count: %s", issuesOutput)
+	}
+
+	applyOutput := runOK(t,
+		"repair-apply",
+		"--db", dbPath,
+		"--opinion-id", "24-777_9ol1",
+		"--passage-id", string(passages[0].PassageID),
+		"--op", "merge_with_next",
+	)
+	if !strings.Contains(applyOutput, "operation=merge_with_next") {
+		t.Fatalf("repair-apply output missing operation: %s", applyOutput)
+	}
+
+	updatedPassages, err := listPassages(storage, mvp.OpinionID("24-777_9ol1"))
+	if err != nil {
+		t.Fatalf("list updated passages: %v", err)
+	}
+	if len(updatedPassages) != originalCount-1 {
+		t.Fatalf("got %d passages want %d", len(updatedPassages), originalCount-1)
+	}
+
+	historyOutput := runOK(t,
+		"repair-history",
+		"--db", dbPath,
+		"--opinion-id", "24-777_9ol1",
+	)
+	if !strings.Contains(historyOutput, "operation=merge_with_next") {
+		t.Fatalf("repair-history output missing operation: %s", historyOutput)
+	}
+
+	undoOutput := runOK(t,
+		"repair-undo",
+		"--db", dbPath,
+		"--opinion-id", "24-777_9ol1",
+	)
+	if !strings.Contains(undoOutput, "revision=0") {
+		t.Fatalf("repair-undo output missing revision reset: %s", undoOutput)
+	}
+
+	restoredPassages, err := listPassages(storage, mvp.OpinionID("24-777_9ol1"))
+	if err != nil {
+		t.Fatalf("list restored passages: %v", err)
+	}
+	if len(restoredPassages) != originalCount {
+		t.Fatalf("got %d passages want %d", len(restoredPassages), originalCount)
+	}
+}
+
 func runOK(t *testing.T, args ...string) string {
 	t.Helper()
 

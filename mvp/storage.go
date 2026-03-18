@@ -18,6 +18,7 @@ type MemoryStorage struct {
 	passages  map[PassageID]Passage
 	progress  map[string]Progress
 	questions map[string][]Question
+	answers   map[QuestionID]AnswerDraft
 }
 
 func NewMemoryStorage() *MemoryStorage {
@@ -27,6 +28,7 @@ func NewMemoryStorage() *MemoryStorage {
 		passages:  map[PassageID]Passage{},
 		progress:  map[string]Progress{},
 		questions: map[string][]Question{},
+		answers:   map[QuestionID]AnswerDraft{},
 	}
 }
 
@@ -91,8 +93,27 @@ func (s *MemoryStorage) SaveQuestionRecord(record QuestionRecord) (QuestionRecor
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := questionKey(question.UserID, question.Anchor.OpinionID)
-	s.questions[key] = append(s.questions[key], question)
+	items := s.questions[key]
+	for index, existing := range items {
+		if existing.QuestionID == question.QuestionID {
+			items[index] = question
+			s.questions[key] = items
+			return question, nil
+		}
+	}
+	s.questions[key] = append(items, question)
 	return question, nil
+}
+
+func (s *MemoryStorage) SaveAnswerRecord(record AnswerRecord) (AnswerRecord, error) {
+	answer, err := answerFromRecord(record)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.answers[answer.QuestionID] = answer
+	return answer, nil
 }
 
 func (s *MemoryStorage) LoadRawPDF(opinionID OpinionID) (RawPDFRecord, error) {
@@ -149,6 +170,27 @@ func (s *MemoryStorage) LoadQuestions(userID UserID, opinionID OpinionID) ([]Que
 	return records, nil
 }
 
+func (s *MemoryStorage) LoadAnswers(userID UserID, opinionID OpinionID) ([]AnswerRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	questions, ok := s.questions[questionKey(userID, opinionID)]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	records := make([]AnswerRecord, 0, len(questions))
+	for _, question := range questions {
+		answer, ok := s.answers[question.QuestionID]
+		if !ok {
+			continue
+		}
+		records = append(records, answer)
+	}
+	if len(records) == 0 {
+		return nil, ErrNotFound
+	}
+	return records, nil
+}
+
 func (s *MemoryStorage) ListPassages(opinionID OpinionID) ([]PassageRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -164,6 +206,25 @@ func (s *MemoryStorage) ListPassages(opinionID OpinionID) ([]PassageRecord, erro
 		return nil, ErrNotFound
 	}
 	return records, nil
+}
+
+func (s *MemoryStorage) ReplacePassages(opinionID OpinionID, records []PassageRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for passageID, passage := range s.passages {
+		if passage.OpinionID == opinionID {
+			delete(s.passages, passageID)
+		}
+	}
+	for _, record := range records {
+		passage, err := passageFromRecord(record)
+		if err != nil {
+			return err
+		}
+		s.passages[passage.PassageID] = passage
+	}
+	return nil
 }
 
 func progressKey(userID UserID, opinionID OpinionID) string {
@@ -212,6 +273,14 @@ func questionFromRecord(record QuestionRecord) (Question, error) {
 		return Question{}, ErrWrongRecordType
 	}
 	return question, nil
+}
+
+func answerFromRecord(record AnswerRecord) (AnswerDraft, error) {
+	answer, ok := record.(AnswerDraft)
+	if !ok {
+		return AnswerDraft{}, ErrWrongRecordType
+	}
+	return answer, nil
 }
 
 func saveRawPDF(storage Storage, raw RawPDF) (RawPDF, error) {
@@ -264,6 +333,14 @@ func saveQuestion(storage Storage, question Question) (Question, error) {
 		return Question{}, err
 	}
 	return questionFromRecord(record)
+}
+
+func saveAnswer(storage Storage, answer AnswerDraft) (AnswerDraft, error) {
+	record, err := storage.SaveAnswerRecord(answer)
+	if err != nil {
+		return AnswerDraft{}, err
+	}
+	return answerFromRecord(record)
 }
 
 func loadRawPDF(storage Storage, opinionID OpinionID) (RawPDF, error) {
@@ -332,4 +409,20 @@ func loadQuestions(storage Storage, userID UserID, opinionID OpinionID) ([]Quest
 		questions = append(questions, question)
 	}
 	return questions, nil
+}
+
+func loadAnswers(storage Storage, userID UserID, opinionID OpinionID) ([]AnswerDraft, error) {
+	records, err := storage.LoadAnswers(userID, opinionID)
+	if err != nil {
+		return nil, err
+	}
+	answers := make([]AnswerDraft, 0, len(records))
+	for _, record := range records {
+		answer, err := answerFromRecord(record)
+		if err != nil {
+			return nil, err
+		}
+		answers = append(answers, answer)
+	}
+	return answers, nil
 }

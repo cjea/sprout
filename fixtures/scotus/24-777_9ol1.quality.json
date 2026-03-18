@@ -68,6 +68,13 @@
       "source": "synthetic",
       "input": "The court applied a substantial-evidence standard to a well-founded-fear claim.",
       "wantNormalized": "The court applied a substantial-evidence standard to a well-founded-fear claim."
+    },
+    {
+      "id": "synthetic-joined-words",
+      "kind": "text_cleanup",
+      "source": "synthetic",
+      "input": "The statute requires applicationof the standard because thatCongress meant to receivedeference.",
+      "wantNormalized": "The statute requires application of the standard because that Congress meant to receive deference."
     }
   ]
 }

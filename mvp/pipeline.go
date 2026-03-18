@@ -228,6 +228,8 @@ func cleanPassageSourceText(text string) string {
 	cleaned = runningHeadPattern.ReplaceAllString(cleaned, " ")
 	cleaned = repairLineBreakHyphenation(cleaned)
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	cleaned = repairKnownHyphenationArtifacts(cleaned)
+	cleaned = repairKnownJoinedWordArtifacts(cleaned)
 	return strings.TrimSpace(cleaned)
 }
 
@@ -315,4 +317,47 @@ func repairLineBreakHyphenation(text string) string {
 		}
 		return left + right
 	})
+}
+
+func repairKnownHyphenationArtifacts(text string) string {
+	replacer := strings.NewReplacer(
+		"asy-lum", "asylum",
+		"refu-gee", "refugee",
+		"ac-count", "account",
+		"per-secution", "persecution",
+		"pre-scribe", "prescribe",
+		"rea-sonable", "reasonable",
+		"de-termination", "determination",
+		"con-stitute", "constitute",
+		"or-dered", "ordered",
+		"ei-ther", "either",
+		"underly-ing", "underlying",
+		"signifi-cant", "significant",
+		"subpar-agraph", "subparagraph",
+		"partic-ular", "particular",
+		"pri-marily", "primarily",
+		"re-view", "review",
+		"noncit- izen", "noncitizen",
+		"noncit-izen", "noncitizen",
+		"Zac- arias", "Zacarias",
+		"Zac-arias", "Zacarias",
+	)
+	return replacer.Replace(text)
+}
+
+func repairKnownJoinedWordArtifacts(text string) string {
+	replacer := strings.NewReplacer(
+		"socialgroup", "social group",
+		"butconcluded", "but concluded",
+		"applicationof", "application of",
+		"concludingthat", "concluding that",
+		"appropriatestandard", "appropriate standard",
+		"substantial-evidencestandard", "substantial-evidence standard",
+		"reviewof", "review of",
+		"thatCongress", "that Congress",
+		"receivedeference", "receive deference",
+		"thejudgment", "the judgment",
+		"de 6novo", "de novo",
+	)
+	return replacer.Replace(text)
 }
