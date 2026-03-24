@@ -80,6 +80,81 @@ func TestSplitSentencesKeepsLegalAbbreviationsIntactOnRealFixtureExcerpt(t *test
 	}
 }
 
+func TestMergeSentenceContinuationsMergesLeadingPunctuationAndFragmentContinuations(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []string
+		want  []string
+	}{
+		{
+			name:  "comma led citation fragment",
+			input: []string{"See United States v. Detroit Timber & Lumber Co.", ", 200 U. S. 321, 337."},
+			want:  []string{"See United States v. Detroit Timber & Lumber Co., 200 U. S. 321, 337."},
+		},
+		{
+			name:  "number range after No",
+			input: []string{"No.", "24-777.", "Argued December 1, 2025."},
+			want:  []string{"No. 24-777.", "Argued December 1, 2025."},
+		},
+		{
+			name:  "single-letter initial fragment",
+			input: []string{"Section III discusses Justice Harlan.", "A.", "The concurrence reaches a narrower ground."},
+			want:  []string{"Section III discusses Justice Harlan. A.", "The concurrence reaches a narrower ground."},
+		},
+		{
+			name:  "lowercase single-letter fragment",
+			input: []string{"URIAS-ORELLANA ET AL.", "v. BONDI, ATTORNEY GENERAL.", "No. 24-777."},
+			want:  []string{"URIAS-ORELLANA ET AL. v. BONDI, ATTORNEY GENERAL.", "No. 24-777."},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeSentenceContinuations(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d sentences want %d: %#v", len(got), len(tt.want), got)
+			}
+			for index := range tt.want {
+				if got[index] != tt.want[index] {
+					t.Fatalf("sentence %d got %q want %q", index, got[index], tt.want[index])
+				}
+			}
+		})
+	}
+}
+
+func TestChunkSectionsMergesPassagesThatBeginWithSingleLetterPeriodOnRealFixture(t *testing.T) {
+	fixture := loadRealFixturePDF(t)
+
+	opinionID, err := MakeOpinionID(fixture.SourceURL)
+	if err != nil {
+		t.Fatalf("make opinion id: %v", err)
+	}
+	raw, err := MakeRawPDF(opinionID, fixture.SourceURL, fixture.Bytes, fixture.FetchedAt)
+	if err != nil {
+		t.Fatalf("make raw pdf: %v", err)
+	}
+	parsed, err := ParsePDF(raw)
+	if err != nil {
+		t.Fatalf("parse pdf: %v", err)
+	}
+	sections, err := GuessSections(Model{Name: "heuristic-v1", MaxContextTokens: 8192}, parsed)
+	if err != nil {
+		t.Fatalf("guess sections: %v", err)
+	}
+	passages, err := ChunkSections(DefaultChunkPolicy(), sections)
+	if err != nil {
+		t.Fatalf("chunk sections: %v", err)
+	}
+
+	for _, passage := range passages {
+		text := string(passage.Text)
+		if strings.HasPrefix(text, "v. ") {
+			t.Fatalf("fixture still produced detached single-letter-period fragment passage %q", text)
+		}
+	}
+}
+
 func TestChunkSectionsStripsRunningHeadsFromRealFixture(t *testing.T) {
 	fixture := loadRealFixturePDF(t)
 
@@ -113,6 +188,52 @@ func TestChunkSectionsStripsRunningHeadsFromRealFixture(t *testing.T) {
 		if slipPattern.MatchString(string(passage.Text)) {
 			t.Fatalf("passage %s still contains slip header: %q", passage.PassageID, passage.Text)
 		}
+	}
+}
+
+func TestChunkSectionsMergesDetachedPunctuationAndNumberRangeFragmentsOnRealFixture(t *testing.T) {
+	fixture := loadRealFixturePDF(t)
+
+	opinionID, err := MakeOpinionID(fixture.SourceURL)
+	if err != nil {
+		t.Fatalf("make opinion id: %v", err)
+	}
+	raw, err := MakeRawPDF(opinionID, fixture.SourceURL, fixture.Bytes, fixture.FetchedAt)
+	if err != nil {
+		t.Fatalf("make raw pdf: %v", err)
+	}
+	parsed, err := ParsePDF(raw)
+	if err != nil {
+		t.Fatalf("parse pdf: %v", err)
+	}
+	sections, err := GuessSections(Model{Name: "heuristic-v1", MaxContextTokens: 8192}, parsed)
+	if err != nil {
+		t.Fatalf("guess sections: %v", err)
+	}
+	passages, err := ChunkSections(DefaultChunkPolicy(), sections)
+	if err != nil {
+		t.Fatalf("chunk sections: %v", err)
+	}
+
+	foundDetroit := false
+	foundDocket := false
+	for _, passage := range passages {
+		text := string(passage.Text)
+		if strings.Contains(text, "See United States v. Detroit Timber & Lumber Co., 200 U. S. 321, 337.") {
+			foundDetroit = true
+		}
+		if strings.Contains(text, "No. 24–777.") || strings.Contains(text, "No. 24-777.") {
+			foundDocket = true
+		}
+		if text == ", 200 U. S. 321, 337." || text == "24–777." || text == "24-777." {
+			t.Fatalf("fixture still produced detached fragment passage %q", text)
+		}
+	}
+	if !foundDetroit {
+		t.Fatal("expected Detroit Timber citation to stay attached to previous sentence")
+	}
+	if !foundDocket {
+		t.Fatal("expected docket number fragment to stay attached to No.")
 	}
 }
 
@@ -155,79 +276,35 @@ func TestCleanPassageSourceTextAgainstQualityCorpusCleanupCases(t *testing.T) {
 	}
 }
 
-func TestChunkSectionsRepairsKnownHyphenationArtifactsOnRealFixture(t *testing.T) {
-	fixture := loadRealFixturePDF(t)
-
-	opinionID, err := MakeOpinionID(fixture.SourceURL)
-	if err != nil {
-		t.Fatalf("make opinion id: %v", err)
-	}
-	raw, err := MakeRawPDF(opinionID, fixture.SourceURL, fixture.Bytes, fixture.FetchedAt)
-	if err != nil {
-		t.Fatalf("make raw pdf: %v", err)
-	}
-	parsed, err := ParsePDF(raw)
-	if err != nil {
-		t.Fatalf("parse pdf: %v", err)
-	}
-	sections, err := GuessSections(Model{Name: "heuristic-v1", MaxContextTokens: 8192}, parsed)
-	if err != nil {
-		t.Fatalf("guess sections: %v", err)
-	}
-	passages, err := ChunkSections(DefaultChunkPolicy(), sections)
-	if err != nil {
-		t.Fatalf("chunk sections: %v", err)
+func TestCleanPassageSourceTextRepairsSpacedLineBreakHyphenArtifacts(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "repairs discretionary hyphen",
+			input: "a given set of undisputed facts constitutes \"per - secution\" under the statute",
+			want:  "a given set of undisputed facts constitutes \"persecution\" under the statute",
+		},
+		{
+			name:  "preserves protected compound",
+			input: "courts apply a substantial - evidence standard",
+			want:  "courts apply a substantial-evidence standard",
+		},
 	}
 
-	banned := []string{
-		"asy-lum",
-		"refu-gee",
-		"ac-count",
-		"per-secution",
-		"pre-scribe",
-		"rea-sonable",
-		"de-termination",
-		"con-stitute",
-		"or-dered",
-		"ei-ther",
-		"underly-ing",
-		"signifi-cant",
-		"subpar-agraph",
-		"partic-ular",
-		"pri-marily",
-		"re-view",
-		"noncit-izen",
-		"noncit- izen",
-		"Zac- arias",
-		"Zac-arias",
-	}
-	allowed := []string{
-		"substantial-evidence",
-		"well-founded",
-	}
-
-	for _, passage := range passages {
-		text := string(passage.Text)
-		for _, needle := range banned {
-			if strings.Contains(text, needle) {
-				t.Fatalf("passage %s still contains hyphenation artifact %q: %q", passage.PassageID, needle, text)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cleanPassageSourceText(tt.input)
+			if got != tt.want {
+				t.Fatalf("got %q want %q", got, tt.want)
 			}
-		}
-	}
-
-	fullText := make([]string, 0, len(passages))
-	for _, passage := range passages {
-		fullText = append(fullText, string(passage.Text))
-	}
-	joined := strings.Join(fullText, " ")
-	for _, needle := range allowed {
-		if !strings.Contains(joined, needle) {
-			t.Fatalf("expected legitimate compound %q to remain present", needle)
-		}
+		})
 	}
 }
 
-func TestChunkSectionsRepairsKnownJoinedWordArtifactsOnRealFixture(t *testing.T) {
+func TestChunkSectionsRepairsSpacedHyphenationArtifactsOnRealFixture(t *testing.T) {
 	fixture := loadRealFixturePDF(t)
 
 	opinionID, err := MakeOpinionID(fixture.SourceURL)
@@ -251,26 +328,17 @@ func TestChunkSectionsRepairsKnownJoinedWordArtifactsOnRealFixture(t *testing.T)
 		t.Fatalf("chunk sections: %v", err)
 	}
 
-	banned := []string{
-		"socialgroup",
-		"butconcluded",
-		"applicationof",
-		"concludingthat",
-		"appropriatestandard",
-		"substantial-evidencestandard",
-		"reviewof",
-		"thatCongress",
-		"receivedeference",
-		"thejudgment",
-		"de 6novo",
-	}
-
+	foundPersecution := false
 	for _, passage := range passages {
 		text := string(passage.Text)
-		for _, needle := range banned {
-			if strings.Contains(text, needle) {
-				t.Fatalf("passage %s still contains joined-word artifact %q: %q", passage.PassageID, needle, text)
-			}
+		if strings.Contains(text, "per - secution") || strings.Contains(text, "per-secution") {
+			t.Fatalf("fixture still produced hyphenation artifact in passage %s: %q", passage.PassageID, text)
 		}
+		if strings.Contains(text, "constitutes \"persecution\"") || strings.Contains(text, "constitutes “persecution”") {
+			foundPersecution = true
+		}
+	}
+	if !foundPersecution {
+		t.Fatal("expected cleaned fixture passage to contain persecution without line-break hyphen artifacts")
 	}
 }

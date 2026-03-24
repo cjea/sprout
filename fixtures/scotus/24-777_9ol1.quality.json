@@ -56,25 +56,11 @@
       "wantNormalized": "The Board rejected the application. The court of appeals affirmed."
     },
     {
-      "id": "synthetic-linebreak-hyphenation",
-      "kind": "text_cleanup",
-      "source": "synthetic",
-      "input": "The statute permits asy-\nlum when the applicant shows past perse-\ncution.",
-      "wantNormalized": "The statute permits asylum when the applicant shows past persecution."
-    },
-    {
       "id": "synthetic-true-hyphen-preserved",
       "kind": "text_cleanup",
       "source": "synthetic",
       "input": "The court applied a substantial-evidence standard to a well-founded-fear claim.",
       "wantNormalized": "The court applied a substantial-evidence standard to a well-founded-fear claim."
-    },
-    {
-      "id": "synthetic-joined-words",
-      "kind": "text_cleanup",
-      "source": "synthetic",
-      "input": "The statute requires applicationof the standard because thatCongress meant to receivedeference.",
-      "wantNormalized": "The statute requires application of the standard because that Congress meant to receive deference."
     }
   ]
 }

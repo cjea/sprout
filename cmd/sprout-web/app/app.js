@@ -12,6 +12,9 @@ const passageText = document.querySelector("[data-passage-text]");
 const citationAnchor = document.querySelector("[data-citation-anchor]");
 const citationList = document.querySelector("[data-citation-list]");
 const citationButton = document.querySelector("[data-citation-button]");
+const sourceAnchor = document.querySelector("[data-source-anchor]");
+const sourceLink = document.querySelector("[data-source-link]");
+const sourceFrame = document.querySelector("[data-source-frame]");
 const continueButton = document.querySelector("[data-continue-button]");
 const questionAnchor = document.querySelector("[data-question-anchor]");
 const questionInput = document.querySelector("#question-input");
@@ -26,6 +29,8 @@ const repairIssues = document.querySelector("[data-repair-issues]");
 const repairHistory = document.querySelector("[data-repair-history]");
 const repairUndo = document.querySelector("[data-repair-undo]");
 const repairActionButtons = Array.from(document.querySelectorAll("[data-repair-action]"));
+const reimportButton = document.querySelector("[data-reimport-button]");
+const reimportWarning = document.querySelector("[data-reimport-warning]");
 const footerCopy = document.querySelector("[data-footer-copy]");
 let readerState = null;
 let selectionState = { start: 0, end: 0, quote: "" };
@@ -152,6 +157,7 @@ async function loadReader() {
     passageHeading.textContent = `Section ${data.passage.sectionId}`;
     passageMeta.textContent = `Pages ${data.passage.pageStart}-${data.passage.pageEnd} · ${data.passage.citations.length} citations in view`;
     passageText.textContent = data.passage.text;
+    renderSourcePanel();
     renderCitationPanel(params.get("citation"));
     restoreSelection(params);
     renderQuestionPanel();
@@ -198,6 +204,9 @@ async function loadReader() {
     passageHeading.textContent = "Reader unavailable";
     passageMeta.textContent = "Passage metadata unavailable.";
     passageText.textContent = String(error);
+    if (sourceAnchor) {
+      sourceAnchor.textContent = "Source document unavailable.";
+    }
     citationAnchor.textContent = "No citation detail available.";
     citationList.innerHTML = "";
     citationButton.disabled = true;
@@ -258,6 +267,24 @@ function renderCitationPanel(citationId) {
   citationAnchor.textContent = active ? active.rawText : "No citation in this passage.";
 }
 
+function renderSourcePanel() {
+  if (!readerState) {
+    if (sourceAnchor) {
+      sourceAnchor.textContent = "Source document unavailable.";
+    }
+    return;
+  }
+  if (sourceAnchor) {
+    sourceAnchor.textContent = `Compare passage ${readerState.passage.passageId} against the original opinion PDF.`;
+  }
+  if (sourceLink) {
+    sourceLink.href = "/api/source";
+  }
+  if (sourceFrame && sourceFrame.getAttribute("src") !== "/api/source") {
+    sourceFrame.setAttribute("src", "/api/source");
+  }
+}
+
 function renderQuestionPanel() {
   if (selectionState.quote) {
     questionAnchor.textContent = `“${selectionState.quote}”`;
@@ -296,6 +323,9 @@ function renderRepairPanel() {
     repairIssues.innerHTML = "";
     repairHistory.innerHTML = "";
     repairUndo.disabled = true;
+    if (reimportButton) {
+      reimportButton.disabled = true;
+    }
     for (const button of repairActionButtons) {
       button.disabled = true;
     }
@@ -337,6 +367,9 @@ function renderRepairPanel() {
     button.disabled = !actionState[button.dataset.repairAction];
   }
   repairUndo.disabled = readerState.repair.history.length === 0;
+  if (reimportButton) {
+    reimportButton.disabled = false;
+  }
   if (repairButton) {
     repairButton.disabled = false;
   }
@@ -368,7 +401,7 @@ function normalizePassageParams() {
 function restorePanelFromURL() {
   const params = currentParams();
   const panel = params.get("panel");
-  const validPanels = new Set(["citation", "question", "answer", "repair"]);
+  const validPanels = new Set(["source", "citation", "question", "answer", "repair"]);
   if (!panel || !validPanels.has(panel)) {
     setPanel("", { push: false });
     return;
@@ -508,6 +541,50 @@ repairUndo.addEventListener("click", async () => {
   pushParams(params);
   await loadReader();
 });
+
+if (reimportButton) {
+  reimportButton.addEventListener("click", async () => {
+    if (!readerState) {
+      return;
+    }
+    const confirmed = window.confirm("Re-import this opinion? This clears saved progress, questions, answers, and repair history for this opinion.");
+    if (!confirmed) {
+      return;
+    }
+
+    reimportButton.disabled = true;
+    if (reimportWarning) {
+      reimportWarning.textContent = "Re-importing opinion and clearing saved state...";
+    }
+
+    const response = await fetch("/api/reimport", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: readerState.progress.userId,
+        opinionId: readerState.opinion.opinionId,
+      }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      if (reimportWarning) {
+        reimportWarning.textContent = `Re-import failed: ${response.status} ${message.trim()}`;
+      }
+      reimportButton.disabled = false;
+      return;
+    }
+
+    const result = await response.json();
+    if (reimportWarning) {
+      reimportWarning.textContent = result.warning;
+    }
+    const params = currentParams();
+    params.set("passage", result.passageId);
+    params.set("panel", "repair");
+    pushParams(params);
+    await loadReader();
+  });
+}
 
 window.addEventListener("popstate", () => {
   loadReader();

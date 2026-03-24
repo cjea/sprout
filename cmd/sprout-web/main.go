@@ -39,12 +39,14 @@ type serverConfig struct {
 }
 
 type server struct {
-	storage   *mvp.SQLiteStorage
-	files     http.Handler
-	userID    mvp.UserID
-	opinionID mvp.OpinionID
-	model     mvp.Model
-	logger    *log.Logger
+	storage     *mvp.SQLiteStorage
+	files       http.Handler
+	userID      mvp.UserID
+	opinionID   mvp.OpinionID
+	fixturePath string
+	fixtureURL  mvp.URL
+	model       mvp.Model
+	logger      *log.Logger
 }
 
 type readerResponse struct {
@@ -86,6 +88,17 @@ type repairRequest struct {
 type repairUndoRequest struct {
 	UserID    string `json:"userId"`
 	OpinionID string `json:"opinionId"`
+}
+
+type reimportRequest struct {
+	UserID    string `json:"userId"`
+	OpinionID string `json:"opinionId"`
+}
+
+type reimportResponse struct {
+	OpinionID string `json:"opinionId"`
+	PassageID string `json:"passageId"`
+	Warning   string `json:"warning"`
 }
 
 type opinionDTO struct {
@@ -225,20 +238,35 @@ func newServer(cfg serverConfig) (http.Handler, func() error, error) {
 		_ = storage.Close()
 		return nil, nil, err
 	}
+	if cfg.FixtureURL == "" {
+		cfg.FixtureURL = defaultFixtureURL
+	}
+	fixtureURL, err := mvp.EnterURL(cfg.FixtureURL)
+	if err != nil {
+		_ = storage.Close()
+		return nil, nil, err
+	}
+	if cfg.FixturePath == "" {
+		cfg.FixturePath = defaultFixturePath
+	}
 
 	app := &server{
-		storage:   storage,
-		files:     http.FileServer(http.FS(sub)),
-		userID:    userID,
-		opinionID: opinionID,
-		model:     model,
-		logger:    log.New(os.Stderr, "sprout-web ", log.LstdFlags),
+		storage:     storage,
+		files:       http.FileServer(http.FS(sub)),
+		userID:      userID,
+		opinionID:   opinionID,
+		fixturePath: cfg.FixturePath,
+		fixtureURL:  fixtureURL,
+		model:       model,
+		logger:      log.New(os.Stderr, "sprout-web ", log.LstdFlags),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/reader", app.handleReader)
+	mux.HandleFunc("/api/source", app.handleSource)
 	mux.HandleFunc("/api/complete", app.handleComplete)
 	mux.HandleFunc("/api/question", app.handleQuestion)
+	mux.HandleFunc("/api/reimport", app.handleReimport)
 	mux.HandleFunc("/api/repair/apply", app.handleRepairApply)
 	mux.HandleFunc("/api/repair/undo", app.handleRepairUndo)
 	mux.HandleFunc("/", app.handleApp)
@@ -335,6 +363,47 @@ func prepareBrowserState(cfg serverConfig) (*mvp.SQLiteStorage, mvp.UserID, mvp.
 	}
 
 	return storage, userID, opinionID, nil
+}
+
+func (s *server) handleReimport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, r, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+
+	var request reimportRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	userID, opinionID, err := s.requestIdentity(request.UserID, request.OpinionID)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	firstPassageID, err := s.reimportFixture(r.Context(), userID, opinionID)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(reimportResponse{
+		OpinionID: string(opinionID),
+		PassageID: string(firstPassageID),
+		Warning:   "Re-import replaced the stored opinion and cleared reading progress, questions, answers, and repair history for this opinion.",
+	})
+}
+
+func (s *server) handleSource(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, r, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return
+	}
+
+	http.ServeFile(w, r, s.fixturePath)
 }
 
 func (s *server) handleApp(w http.ResponseWriter, r *http.Request) {
@@ -738,6 +807,39 @@ func (s *server) requestIdentity(rawUserID, rawOpinionID string) (mvp.UserID, mv
 		opinionID = parsed
 	}
 	return userID, opinionID, nil
+}
+
+func (s *server) reimportFixture(ctx context.Context, userID mvp.UserID, opinionID mvp.OpinionID) (mvp.PassageID, error) {
+	bytes, err := os.ReadFile(s.fixturePath)
+	if err != nil {
+		return "", fmt.Errorf("read fixture: %w", err)
+	}
+
+	raw, err := mvp.MakeRawPDF(opinionID, s.fixtureURL, bytes, mvp.SystemClock{}.Now())
+	if err != nil {
+		return "", err
+	}
+
+	var firstPassageID mvp.PassageID
+	err = s.storage.InTx(func(txStorage mvp.Storage) error {
+		resettable, ok := txStorage.(mvp.OpinionResetStorage)
+		if !ok {
+			return mvp.ErrWrongRecordType
+		}
+		if err := resettable.DeleteOpinion(ctx, opinionID); err != nil {
+			return err
+		}
+		firstPassageID, err = mvp.IngestRawPDF(userID, raw, txStorage, s.model)
+		if err != nil {
+			return err
+		}
+		_, err = mvp.OpenPassage(userID, firstPassageID, txStorage)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return firstPassageID, nil
 }
 
 func opinionData(opinion mvp.Opinion) opinionDTO {

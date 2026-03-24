@@ -9,22 +9,11 @@ var (
 	ErrUnknownPassageIssueKind = errors.New("unknown passage issue kind")
 )
 
-var (
-	joinedWordArtifactWords = []string{
-		"applicationof",
-		"thatCongress",
-		"receivedeference",
-		"socialgroup",
-		"butconcluded",
-	}
-)
-
 type PassageIssueKind string
 
 const (
 	PassageIssuePageHeaderArtifact    PassageIssueKind = "page_header_artifact"
 	PassageIssueHyphenationArtifact   PassageIssueKind = "hyphenation_artifact"
-	PassageIssueJoinedWordArtifact    PassageIssueKind = "joined_word_artifact"
 	PassageIssueBadSentenceBoundary   PassageIssueKind = "bad_sentence_boundary"
 	PassageIssueCitationDetached      PassageIssueKind = "citation_detached"
 	PassageIssuePageReferenceDetached PassageIssueKind = "page_reference_detached"
@@ -41,7 +30,6 @@ func ParsePassageIssueKind(value string) (PassageIssueKind, error) {
 	switch PassageIssueKind(strings.TrimSpace(value)) {
 	case PassageIssuePageHeaderArtifact,
 		PassageIssueHyphenationArtifact,
-		PassageIssueJoinedWordArtifact,
 		PassageIssueBadSentenceBoundary,
 		PassageIssueCitationDetached,
 		PassageIssuePageReferenceDetached,
@@ -105,11 +93,6 @@ func ClassifyPassageIssues(passage Passage, previous *Passage, next *Passage) ([
 			return nil, err
 		}
 	}
-	if containsJoinedWordArtifact(text) {
-		if err := add(PassageIssueJoinedWordArtifact, "passage contains a joined-word extraction artifact"); err != nil {
-			return nil, err
-		}
-	}
 	if suspicious := DetectSuspiciousSentenceBoundaries([]string{text}); len(suspicious) > 0 {
 		if err := add(PassageIssueBadSentenceBoundary, "passage contains a suspicious internal sentence boundary"); err != nil {
 			return nil, err
@@ -162,15 +145,6 @@ func containsKnownHyphenationArtifact(text string) bool {
 		"re-view",
 	}
 	for _, needle := range needles {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsJoinedWordArtifact(text string) bool {
-	for _, needle := range joinedWordArtifactWords {
 		if strings.Contains(text, needle) {
 			return true
 		}

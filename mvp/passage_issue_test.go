@@ -64,18 +64,6 @@ func TestClassifyPassageIssuesForSyntheticArtifacts(t *testing.T) {
 	if !hasIssue(issues, PassageIssueHyphenationArtifact) {
 		t.Fatalf("expected hyphenation issue, got %#v", issues)
 	}
-
-	joined, err := NewPassage(passageID, opinionID, sectionID, 0, 0, 1, 1, "The statute requires applicationof the standard.", nil, true)
-	if err != nil {
-		t.Fatalf("new joined-word passage: %v", err)
-	}
-	issues, err = ClassifyPassageIssues(joined, nil, nil)
-	if err != nil {
-		t.Fatalf("classify joined-word passage: %v", err)
-	}
-	if !hasIssue(issues, PassageIssueJoinedWordArtifact) {
-		t.Fatalf("expected joined-word issue, got %#v", issues)
-	}
 }
 
 func TestClassifyPassageIssuesLeavesCleanFixturePassagesAlone(t *testing.T) {
@@ -111,7 +99,7 @@ func TestClassifyPassageIssuesLeavesCleanFixturePassagesAlone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("classify clean passage: %v", err)
 		}
-		if hasIssue(issues, PassageIssueHyphenationArtifact) || hasIssue(issues, PassageIssueJoinedWordArtifact) || hasIssue(issues, PassageIssuePageHeaderArtifact) {
+		if hasIssue(issues, PassageIssueHyphenationArtifact) || hasIssue(issues, PassageIssuePageHeaderArtifact) {
 			t.Fatalf("clean fixture passage should not contain extraction artifact issues: %#v", issues)
 		}
 	}

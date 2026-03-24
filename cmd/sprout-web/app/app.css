@@ -180,6 +180,17 @@ textarea {
   gap: 0.8rem;
 }
 
+.reimport-panel {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.reimport-warning {
+  margin: 0 0 0.9rem;
+  color: var(--accent);
+}
+
 .action-button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -191,6 +202,12 @@ textarea {
   border-color: transparent;
 }
 
+.action-button-warning {
+  background: rgba(155, 77, 33, 0.12);
+  border-color: rgba(155, 77, 33, 0.35);
+  color: var(--accent);
+}
+
 .secondary-surface {
   grid-column: 2 / 3;
   grid-row: 1 / span 2;
@@ -200,6 +217,10 @@ textarea {
   padding: 1.25rem;
   border-radius: var(--radius);
   background: var(--panel);
+}
+
+.panel-card-source {
+  min-height: 42rem;
 }
 
 .panel-header {
@@ -220,6 +241,23 @@ textarea {
   margin: 0 0 1rem;
   padding-left: 1.2rem;
   color: var(--ink-soft);
+}
+
+.source-link {
+  display: inline-flex;
+  margin-bottom: 1rem;
+  color: var(--accent);
+  text-decoration: none;
+  font-family: "Helvetica Neue", Helvetica, sans-serif;
+  font-weight: 600;
+}
+
+.source-frame {
+  width: 100%;
+  min-height: 34rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .citation-list button {

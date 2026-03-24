@@ -55,7 +55,6 @@ Examples:
 
 - remove running headers
 - repair extraction hyphenation
-- repair known joined-word artifacts
 - rerun heuristic sentence segmentation
 - `guess` a sentence repair
 
@@ -88,7 +87,6 @@ Initial issue classes:
 
 - `page_header_artifact`
 - `hyphenation_artifact`
-- `joined_word_artifact`
 - `bad_sentence_boundary`
 - `citation_detached`
 - `page_reference_detached`

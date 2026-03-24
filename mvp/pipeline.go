@@ -10,10 +10,11 @@ var (
 	caseCitationPattern         = regexp.MustCompile(`([A-Z][A-Za-z.&'\-]+ v\. [A-Z][A-Za-z.&'\-]+)`)
 	statuteCitationPattern      = regexp.MustCompile(`([0-9]+ U\.?\s*S\.?\s*C\.?\s*§+\s*[0-9A-Za-z\-]+)`)
 	sentenceSplitPattern        = regexp.MustCompile(`[^.!?]+(?:[.!?](?:["'”’)\]]+)?)?`)
-	slipOpinionHeaderPattern    = regexp.MustCompile(`(?i)^\s*\d+\s+\(Slip Opinion\)\s+OCTOBER TERM,\s+\d{4}\s+Syllabus\s*`)
+	slipOpinionHeaderPattern    = regexp.MustCompile(`(?i)^\s*(?:\d+\s+)?\(Slip Opinion\)\s+OCTOBER TERM,\s+\d{4}\s+(?:\d+\s+)?(?:Syllabus|Opinion of the Court)\s*`)
 	runningHeadPattern          = regexp.MustCompile(`(?im)\s*\n?\s*\d+\s+[A-Z][A-Z .,'\-]+ v\. [A-Z][A-Za-z .,'\-]+(?:\s+Syllabus|\s+Opinion of the Court)\s*`)
 	citationContinuationPattern = regexp.MustCompile(`^(?:[0-9]+ U\.?\s*S\.?\s*C\.?\s*§+\s*[0-9A-Za-z\-().]+|§[0-9A-Za-z\-().]+|[A-Z][A-Za-z.&'\-]+ v\. [A-Z][A-Za-z.&'\-]+)`)
-	lineBreakHyphenPattern      = regexp.MustCompile(`([A-Za-z]{1,20})-\s*\n\s*([A-Za-z]{1,20})`)
+	spacedHyphenArtifactPattern = regexp.MustCompile(`\b([A-Za-z]{1,30})\s+-\s+([A-Za-z]{1,30})\b`)
+	singleLetterInitialPattern  = regexp.MustCompile(`^[A-Za-z]\.`)
 )
 
 func ChunkSections(policy ChunkPolicy, sections []Section) ([]Passage, error) {
@@ -226,17 +227,43 @@ func splitSentences(text string) []string {
 func cleanPassageSourceText(text string) string {
 	cleaned := slipOpinionHeaderPattern.ReplaceAllString(text, "")
 	cleaned = runningHeadPattern.ReplaceAllString(cleaned, " ")
-	cleaned = repairLineBreakHyphenation(cleaned)
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
-	cleaned = repairKnownHyphenationArtifacts(cleaned)
-	cleaned = repairKnownJoinedWordArtifacts(cleaned)
+	cleaned = repairSpacedHyphenationArtifacts(cleaned)
 	return strings.TrimSpace(cleaned)
+}
+
+func repairSpacedHyphenationArtifacts(text string) string {
+	protectedCompounds := map[string]struct{}{
+		"substantial-evidence": {},
+		"well-founded":         {},
+	}
+
+	return spacedHyphenArtifactPattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := spacedHyphenArtifactPattern.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+
+		left := parts[1]
+		right := parts[2]
+		if !startsWithLowerASCII(right) {
+			return match
+		}
+
+		compound := strings.ToLower(left + "-" + right)
+		if _, ok := protectedCompounds[compound]; ok {
+			return left + "-" + right
+		}
+		return left + right
+	})
 }
 
 func protectAbbreviations(text string) string {
 	replacer := strings.NewReplacer(
 		"Pp.", "Pp§",
 		"Id.", "Id§",
+		"No.", "No§",
+		"Co.", "Co§",
 		"v.", "v§",
 		"U.S.C.", "U§S§C§",
 		"U. S. C.", "U§ S§ C§",
@@ -252,6 +279,8 @@ func restoreAbbreviations(text string) string {
 	replacer := strings.NewReplacer(
 		"Pp§", "Pp.",
 		"Id§", "Id.",
+		"No§", "No.",
+		"Co§", "Co.",
 		"v§", "v.",
 		"U§S§C§", "U.S.C.",
 		"U§ S§ C§", "U. S. C.",
@@ -272,6 +301,10 @@ func mergeSentenceContinuations(sentences []string) []string {
 		}
 		if isCitationContinuation(sentence) {
 			merged[len(merged)-1] = strings.TrimSpace(merged[len(merged)-1] + " " + sentence)
+			continue
+		}
+		if isLeadingFragmentContinuation(sentence) {
+			merged[len(merged)-1] = joinLeadingFragment(merged[len(merged)-1], sentence)
 			continue
 		}
 		merged = append(merged, sentence)
@@ -297,67 +330,35 @@ func isCitationContinuation(sentence string) bool {
 	return false
 }
 
-func repairLineBreakHyphenation(text string) string {
-	protectedCompounds := map[string]struct{}{
-		"substantial-evidence": {},
-		"well-founded":         {},
+func isLeadingFragmentContinuation(sentence string) bool {
+	trimmed := strings.TrimSpace(sentence)
+	if trimmed == "" {
+		return false
 	}
+	if pageRangeFragmentPattern.MatchString(trimmed) {
+		return true
+	}
+	if singleLetterInitialPattern.MatchString(trimmed) {
+		return true
+	}
+	switch trimmed[0] {
+	case ',', '.', ';', ':', ')', ']', '}':
+		return true
+	default:
+		return false
+	}
+}
 
-	return lineBreakHyphenPattern.ReplaceAllStringFunc(text, func(match string) string {
-		parts := lineBreakHyphenPattern.FindStringSubmatch(match)
-		if len(parts) != 3 {
-			return match
-		}
-
-		left := parts[1]
-		right := parts[2]
-		compound := strings.ToLower(left + "-" + right)
-		if _, ok := protectedCompounds[compound]; ok {
-			return left + "-" + right
-		}
+func joinLeadingFragment(left string, right string) string {
+	left = strings.TrimRight(left, " ")
+	right = strings.TrimSpace(right)
+	if right == "" {
+		return left
+	}
+	switch right[0] {
+	case ',', '.', ';', ':', ')', ']', '}':
 		return left + right
-	})
-}
-
-func repairKnownHyphenationArtifacts(text string) string {
-	replacer := strings.NewReplacer(
-		"asy-lum", "asylum",
-		"refu-gee", "refugee",
-		"ac-count", "account",
-		"per-secution", "persecution",
-		"pre-scribe", "prescribe",
-		"rea-sonable", "reasonable",
-		"de-termination", "determination",
-		"con-stitute", "constitute",
-		"or-dered", "ordered",
-		"ei-ther", "either",
-		"underly-ing", "underlying",
-		"signifi-cant", "significant",
-		"subpar-agraph", "subparagraph",
-		"partic-ular", "particular",
-		"pri-marily", "primarily",
-		"re-view", "review",
-		"noncit- izen", "noncitizen",
-		"noncit-izen", "noncitizen",
-		"Zac- arias", "Zacarias",
-		"Zac-arias", "Zacarias",
-	)
-	return replacer.Replace(text)
-}
-
-func repairKnownJoinedWordArtifacts(text string) string {
-	replacer := strings.NewReplacer(
-		"socialgroup", "social group",
-		"butconcluded", "but concluded",
-		"applicationof", "application of",
-		"concludingthat", "concluding that",
-		"appropriatestandard", "appropriate standard",
-		"substantial-evidencestandard", "substantial-evidence standard",
-		"reviewof", "review of",
-		"thatCongress", "that Congress",
-		"receivedeference", "receive deference",
-		"thejudgment", "the judgment",
-		"de 6novo", "de novo",
-	)
-	return replacer.Replace(text)
+	default:
+		return strings.TrimSpace(left + " " + right)
+	}
 }

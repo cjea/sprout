@@ -158,6 +158,18 @@ Or use the wrapper:
 scripts/run_browser.sh
 ```
 
+For a friendlier real-model launch path, use:
+
+```sh
+scripts/run_browser_llm.sh
+```
+
+If `OPENAI_API_KEY` is missing, the script prompts in interactive use and fails clearly in non-interactive use. You can override the model with `SPROUT_LLM_MODEL`, for example:
+
+```sh
+SPROUT_LLM_MODEL=gpt-4.1-mini scripts/run_browser_llm.sh :8080
+```
+
 Then open:
 
 ```txt
@@ -173,7 +185,18 @@ Current browser capabilities:
 - advance through real generated passages
 - open citation detail without leaving the reading workspace
 - select passage text, submit a question, and review a guessed answer
+- re-import the stored opinion from the configured fixture path through the repair panel, with a warning that progress, questions, answers, and repair history for that opinion will be cleared
 - keep passage and panel state in the URL enough to support refresh and basic back/forward navigation
+
+## Re-import
+
+For ingestion and processing changes, the browser now exposes a re-import control in the `Passage Repair` panel.
+
+- `Re-import Opinion` deletes the stored opinion and raw PDF for the current opinion, lets SQLite cascade opinion-scoped progress, questions, answers, and repair history, then ingests the configured fixture again and opens the first passage.
+- The browser shows a warning before running it because reading progress will be lost for that opinion.
+- The same browser fixture settings are used as initial boot:
+  `--fixture fixtures/scotus/24-777_9ol1.pdf`
+  `--fixture-url https://www.supremecourt.gov/opinions/25pdf/24-777_9ol1.pdf`
 
 The browser server uses the same optional provider-backed `guessAnswer` path. For example:
 
@@ -216,6 +239,7 @@ Thin wrappers are available under [`scripts/`](.scripts):
 - [`scripts/read_current.sh`](./scripts/read_current.sh)
 - [`scripts/ask.sh`](./scripts/ask.sh)
 - [`scripts/run_browser.sh`](./scripts/run_browser.sh)
+- [`scripts/run_browser_llm.sh`](./scripts/run_browser_llm.sh)
 
 Example:
 

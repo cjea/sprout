@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -34,7 +35,9 @@ func TestServerServesShell(t *testing.T) {
 		"workspace-shell",
 		"passage-stage",
 		"secondary-surface",
+		"Source Document",
 		"Passage Repair",
+		"Re-import Opinion",
 		"mergeNext",
 		"data-previous-passage",
 	} {
@@ -55,8 +58,8 @@ func TestServerServesAssets(t *testing.T) {
 		path     string
 		contains []string
 	}{
-		{path: "/app.css", contains: []string{"--paper", "@media (max-width: 920px)", ".passage-stage"}},
-		{path: "/app.js", contains: []string{"setPanel", "popstate", "/api/question", "/api/repair/apply", "mergeNext", "data-previous-passage", "previousPassageId", "openPassage"}},
+		{path: "/app.css", contains: []string{"--paper", "@media (max-width: 920px)", ".passage-stage", ".source-frame"}},
+		{path: "/app.js", contains: []string{"setPanel", "popstate", "/api/source", "/api/question", "/api/repair/apply", "/api/reimport", "mergeNext", "data-previous-passage", "previousPassageId", "openPassage", "window.confirm"}},
 	}
 
 	for _, tt := range tests {
@@ -74,6 +77,29 @@ func TestServerServesAssets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSourceEndpointServesFixturePDF(t *testing.T) {
+	handler, closeFn, err := newServer(testServerConfig(t))
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer closeFn()
+
+	request := httptest.NewRequest(http.MethodGet, "/api/source", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("got status %d, want %d", recorder.Code, http.StatusOK)
+	}
+	contentType := recorder.Header().Get("Content-Type")
+	if !strings.Contains(contentType, "application/pdf") {
+		t.Fatalf("got content type %q, want pdf", contentType)
+	}
+	if !bytes.HasPrefix(recorder.Body.Bytes(), []byte("%PDF")) {
+		t.Fatalf("expected pdf bytes")
 	}
 }
 
@@ -263,6 +289,131 @@ func TestCompleteEndpointUpdatesProgress(t *testing.T) {
 	}
 	if progress.CompletedPassages[0] != reader.Passage.PassageID {
 		t.Fatalf("got completed passage %q, want %q", progress.CompletedPassages[0], reader.Passage.PassageID)
+	}
+}
+
+func TestReimportEndpointReplacesOpinionAndClearsOpinionState(t *testing.T) {
+	cfg := testServerConfig(t)
+	handler, closeFn, err := newServer(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer closeFn()
+
+	reader := mustReadReader(t, handler, "/api/reader")
+	firstPassageID := reader.Passage.PassageID
+
+	completeBody, err := json.Marshal(completeRequest{
+		UserID:    defaultUserID,
+		OpinionID: reader.Opinion.OpinionID,
+		PassageID: reader.Passage.PassageID,
+	})
+	if err != nil {
+		t.Fatalf("marshal complete payload: %v", err)
+	}
+	completeRequest := httptest.NewRequest(http.MethodPost, "/api/complete", bytes.NewReader(completeBody))
+	completeRequest.Header.Set("Content-Type", "application/json")
+	completeRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(completeRecorder, completeRequest)
+	if completeRecorder.Code != http.StatusOK {
+		t.Fatalf("complete status %d body=%s", completeRecorder.Code, completeRecorder.Body.String())
+	}
+
+	end := 32
+	if len(reader.Passage.Text) < end {
+		end = len(reader.Passage.Text)
+	}
+	questionBody, err := json.Marshal(questionRequest{
+		UserID:    defaultUserID,
+		OpinionID: reader.Opinion.OpinionID,
+		PassageID: reader.Passage.PassageID,
+		Start:     0,
+		End:       end,
+		Text:      "What does this sentence mean?",
+	})
+	if err != nil {
+		t.Fatalf("marshal question payload: %v", err)
+	}
+	questionRequest := httptest.NewRequest(http.MethodPost, "/api/question", bytes.NewReader(questionBody))
+	questionRequest.Header.Set("Content-Type", "application/json")
+	questionRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(questionRecorder, questionRequest)
+	if questionRecorder.Code != http.StatusOK {
+		t.Fatalf("question status %d body=%s", questionRecorder.Code, questionRecorder.Body.String())
+	}
+
+	repairBody, err := json.Marshal(repairRequest{
+		UserID:    defaultUserID,
+		OpinionID: reader.Opinion.OpinionID,
+		PassageID: reader.Passage.PassageID,
+		Operation: "mergeNext",
+	})
+	if err != nil {
+		t.Fatalf("marshal repair payload: %v", err)
+	}
+	repairRequest := httptest.NewRequest(http.MethodPost, "/api/repair/apply", bytes.NewReader(repairBody))
+	repairRequest.Header.Set("Content-Type", "application/json")
+	repairRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(repairRecorder, repairRequest)
+	if repairRecorder.Code != http.StatusOK {
+		t.Fatalf("repair status %d body=%s", repairRecorder.Code, repairRecorder.Body.String())
+	}
+
+	reimportBody, err := json.Marshal(reimportRequest{
+		UserID:    defaultUserID,
+		OpinionID: reader.Opinion.OpinionID,
+	})
+	if err != nil {
+		t.Fatalf("marshal reimport payload: %v", err)
+	}
+	reimportRequest := httptest.NewRequest(http.MethodPost, "/api/reimport", bytes.NewReader(reimportBody))
+	reimportRequest.Header.Set("Content-Type", "application/json")
+	reimportRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(reimportRecorder, reimportRequest)
+	if reimportRecorder.Code != http.StatusOK {
+		t.Fatalf("reimport status %d body=%s", reimportRecorder.Code, reimportRecorder.Body.String())
+	}
+
+	var reimported reimportResponse
+	if err := json.Unmarshal(reimportRecorder.Body.Bytes(), &reimported); err != nil {
+		t.Fatalf("decode reimport response: %v", err)
+	}
+	if reimported.PassageID == "" {
+		t.Fatal("expected new focus passage after reimport")
+	}
+	if !strings.Contains(reimported.Warning, "cleared") {
+		t.Fatalf("expected warning text, got %q", reimported.Warning)
+	}
+
+	refreshed := mustReadReader(t, handler, "/api/reader?panel=repair")
+	if refreshed.Passage.PassageID != firstPassageID {
+		t.Fatalf("got current passage %q want %q after reimport", refreshed.Passage.PassageID, firstPassageID)
+	}
+	if len(refreshed.Progress.CompletedPassages) != 0 {
+		t.Fatalf("expected completed passages to be cleared, got %#v", refreshed.Progress.CompletedPassages)
+	}
+	if len(refreshed.Questions) != 0 {
+		t.Fatalf("expected questions to be cleared, got %#v", refreshed.Questions)
+	}
+	if len(refreshed.Repair.History) != 0 {
+		t.Fatalf("expected repair history to be cleared, got %#v", refreshed.Repair.History)
+	}
+
+	storage, err := mvp.OpenSQLiteWithMigrations(cfg.DBPath, mvp.SystemClock{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer storage.Close()
+
+	userID, _ := mvp.NewUserID(defaultUserID)
+	opinionID, _ := mvp.NewOpinionID(reader.Opinion.OpinionID)
+	answers, err := storage.LoadAnswers(userID, opinionID)
+	if !errors.Is(err, mvp.ErrNotFound) {
+		t.Fatalf("expected cleared answers, got err=%v answers=%#v", err, answers)
+	}
+	entries, err := storage.ListPassageRepairAudit(context.Background(), opinionID, string(userID))
+	if !errors.Is(err, mvp.ErrPassageRepairAuditEmpty) {
+		t.Fatalf("expected cleared repair audit, got err=%v entries=%#v", err, entries)
 	}
 }
 

@@ -153,6 +153,20 @@ func (s *SQLiteStorage) InTx(fn func(Storage) error) error {
 	return tx.Commit()
 }
 
+func (s *SQLiteStorage) DeleteOpinion(ctx context.Context, opinionID OpinionID) error {
+	return s.InTx(func(txStorage Storage) error {
+		resettable, ok := txStorage.(OpinionResetStorage)
+		if !ok {
+			return ErrWrongRecordType
+		}
+		return resettable.DeleteOpinion(ctx, opinionID)
+	})
+}
+
+func (s *sqliteTxStorage) DeleteOpinion(ctx context.Context, opinionID OpinionID) error {
+	return deleteOpinionExec(ctx, s.tx, opinionID)
+}
+
 func NewTempSQLite(clock Clock) (*SQLiteStorage, string, error) {
 	dir, err := os.MkdirTemp("", "sprout-sqlite-*")
 	if err != nil {
@@ -520,6 +534,16 @@ func replacePassagesExec(ctx context.Context, exec sqliteExecutor, opinionID Opi
 		return err
 	}
 	return savePassagesExec(ctx, exec, passages)
+}
+
+func deleteOpinionExec(ctx context.Context, exec sqliteExecutor, opinionID OpinionID) error {
+	if _, err := exec.ExecContext(ctx, `DELETE FROM raw_pdfs WHERE opinion_id = ?`, opinionID); err != nil {
+		return err
+	}
+	if _, err := exec.ExecContext(ctx, `DELETE FROM opinions WHERE opinion_id = ?`, opinionID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func saveProgressExec(ctx context.Context, exec sqliteExecutor, progress Progress) error {

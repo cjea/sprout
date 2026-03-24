@@ -69,12 +69,12 @@ func TestQualityCorpusIncludesFixtureAnchoredPassageCases(t *testing.T) {
 	corpus := loadQualityCorpus(t)
 
 	required := map[string]bool{
-		"real-held-pp":         false,
-		"real-nasrallah-usc":   false,
-		"synthetic-id-at":      false,
-		"synthetic-usc-trailing-cite": false,
+		"real-held-pp":                  false,
+		"real-nasrallah-usc":            false,
+		"synthetic-id-at":               false,
+		"synthetic-usc-trailing-cite":   false,
 		"synthetic-page-header-artifact": false,
-		"synthetic-linebreak-hyphenation": false,
+		"synthetic-true-hyphen-preserved": false,
 	}
 
 	for _, testCase := range corpus.Cases {

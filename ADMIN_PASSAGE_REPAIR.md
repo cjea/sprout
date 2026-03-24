@@ -31,7 +31,7 @@ Look for:
 - `Id., at 484.` detached into its own fragment
 - an orphan fragment that should merge with an adjacent passage
 - a passage that should split at a sentence boundary
-- extraction artifacts like page headers, bad hyphens, or joined words
+- extraction artifacts like page headers or bad hyphens
 
 ## Primitive Repairs
 

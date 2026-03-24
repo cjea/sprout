@@ -31,6 +31,7 @@
         </section>
 
         <nav class="action-strip" aria-label="Passage actions">
+          <button type="button" class="action-button" data-panel="source">Source</button>
           <button type="button" class="action-button" data-panel="citation" data-citation-button>Reveal Citation</button>
           <button type="button" class="action-button" data-panel="question">Ask Question</button>
           <button type="button" class="action-button" data-panel="answer">Review Answer</button>
@@ -39,6 +40,17 @@
         </nav>
 
         <aside class="secondary-surface" data-panel-root hidden>
+          <div class="panel-card panel-card-source" data-panel-view="source" hidden>
+            <div class="panel-header">
+              <p class="panel-label">Source Document</p>
+              <button type="button" class="close-button" data-close-panel>Close</button>
+            </div>
+            <p class="panel-anchor" data-source-anchor>Open the original opinion PDF to compare suspicious passage text against the source.</p>
+            <p class="panel-body">This is the original checked-in opinion file used for ingestion.</p>
+            <a class="source-link" data-source-link href="/api/source" target="_blank" rel="noreferrer">Open PDF In New Tab</a>
+            <iframe class="source-frame" data-source-frame title="Original opinion PDF" src="/api/source"></iframe>
+          </div>
+
           <div class="panel-card" data-panel-view="citation" hidden>
             <div class="panel-header">
               <p class="panel-label">Citation Detail</p>
@@ -90,6 +102,11 @@
               <button type="button" class="action-button" data-repair-undo>Undo</button>
             </div>
             <ul class="citation-list" data-repair-history></ul>
+            <div class="reimport-panel">
+              <p class="panel-label repair-subhead">Re-import</p>
+              <p class="reimport-warning" data-reimport-warning>Re-import replaces the stored opinion and clears progress, questions, answers, and repair history for this opinion.</p>
+              <button type="button" class="action-button action-button-warning" data-reimport-button>Re-import Opinion</button>
+            </div>
           </div>
         </aside>
       </main>

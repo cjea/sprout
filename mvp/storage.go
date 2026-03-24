@@ -1,6 +1,7 @@
 package mvp
 
 import (
+	"context"
 	"errors"
 	"sync"
 )
@@ -19,6 +20,10 @@ type MemoryStorage struct {
 	progress  map[string]Progress
 	questions map[string][]Question
 	answers   map[QuestionID]AnswerDraft
+}
+
+type OpinionResetStorage interface {
+	DeleteOpinion(context.Context, OpinionID) error
 }
 
 func NewMemoryStorage() *MemoryStorage {
@@ -223,6 +228,40 @@ func (s *MemoryStorage) ReplacePassages(opinionID OpinionID, records []PassageRe
 			return err
 		}
 		s.passages[passage.PassageID] = passage
+	}
+	return nil
+}
+
+func (s *MemoryStorage) DeleteOpinion(_ context.Context, opinionID OpinionID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.rawPDFs, opinionID)
+	delete(s.opinions, opinionID)
+	for passageID, passage := range s.passages {
+		if passage.OpinionID == opinionID {
+			delete(s.passages, passageID)
+		}
+	}
+	for key, progress := range s.progress {
+		if progress.OpinionID == opinionID {
+			delete(s.progress, key)
+		}
+	}
+	for key, questions := range s.questions {
+		filtered := questions[:0]
+		for _, question := range questions {
+			if question.Anchor.OpinionID == opinionID {
+				delete(s.answers, question.QuestionID)
+				continue
+			}
+			filtered = append(filtered, question)
+		}
+		if len(filtered) == 0 {
+			delete(s.questions, key)
+			continue
+		}
+		s.questions[key] = filtered
 	}
 	return nil
 }

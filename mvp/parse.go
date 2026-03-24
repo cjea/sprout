@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	pdf "github.com/ledongthuc/pdf"
@@ -19,6 +20,7 @@ var (
 	dissentPattern        = regexp.MustCompile(`(?i)^JUSTICE .* dissenting`)
 	majorityPattern       = regexp.MustCompile(`(?i)^JUSTICE .* delivered the opinion of the Court\.`)
 	majorityInlinePattern = regexp.MustCompile(`JUSTICE [A-Z]+ delivered the opinion of the Court\.`)
+	trailingHyphenPattern = regexp.MustCompile(`([A-Za-z]{1,30})\s*-\s*$`)
 )
 
 type sectionStart struct {
@@ -41,13 +43,7 @@ func ParsePDF(raw RawPDF) (ParsedPDF, error) {
 
 	for index := 1; index <= reader.NumPage(); index++ {
 		page := reader.Page(index)
-		for _, name := range page.Fonts() {
-			if _, ok := fontCache[name]; !ok {
-				font := page.Font(name)
-				fontCache[name] = &font
-			}
-		}
-		text, err := page.GetPlainText(fontCache)
+		text, err := extractPageText(page, fontCache)
 		if err != nil {
 			return ParsedPDF{}, fmt.Errorf("extract page %d text: %w", index, err)
 		}
@@ -76,6 +72,112 @@ func ParsePDF(raw RawPDF) (ParsedPDF, error) {
 	}
 
 	return NewParsedPDF(raw.OpinionID, pages, Text(fullText.String()), nil)
+}
+
+func extractPageText(page pdf.Page, fontCache map[string]*pdf.Font) (string, error) {
+	texts := page.Content().Text
+	if len(texts) > 0 {
+		sort.Slice(texts, func(i, j int) bool {
+			if texts[i].Y != texts[j].Y {
+				return texts[i].Y > texts[j].Y
+			}
+			return texts[i].X < texts[j].X
+		})
+
+		var (
+			builder strings.Builder
+			line    []pdf.Text
+			lineY   float64
+		)
+		flushLine := func() {
+			if len(line) == 0 {
+				return
+			}
+			if builder.Len() > 0 {
+				builder.WriteByte('\n')
+			}
+			builder.WriteString(reconstructPageLine(line))
+			line = nil
+		}
+
+		for _, text := range texts {
+			if text.S == "\n" {
+				continue
+			}
+			if len(line) == 0 {
+				lineY = text.Y
+			}
+			if len(line) > 0 && text.Y != lineY {
+				flushLine()
+				lineY = text.Y
+			}
+			line = append(line, text)
+		}
+		flushLine()
+		return builder.String(), nil
+	}
+
+	for _, name := range page.Fonts() {
+		if _, ok := fontCache[name]; !ok {
+			font := page.Font(name)
+			fontCache[name] = &font
+		}
+	}
+	return page.GetPlainText(fontCache)
+}
+
+func reconstructPageLine(line []pdf.Text) string {
+	var (
+		builder      strings.Builder
+		lastEnd      float64
+		hasWritten   bool
+		pendingSpace bool
+	)
+
+	for _, text := range line {
+		if text.S == " " {
+			pendingSpace = true
+			continue
+		}
+
+		gap := text.X - lastEnd
+		switch {
+		case !hasWritten:
+		case pendingSpace && shouldInsertSpace(builder.String(), text.S, gap):
+			builder.WriteByte(' ')
+		case !pendingSpace && gap > 1.5:
+			builder.WriteByte(' ')
+		}
+
+		builder.WriteString(text.S)
+		lastEnd = text.X + text.W
+		hasWritten = true
+		pendingSpace = false
+	}
+
+	return builder.String()
+}
+
+func shouldInsertSpace(current string, next string, gap float64) bool {
+	if current == "" || next == "" {
+		return false
+	}
+	last := current[len(current)-1]
+	first := next[0]
+	if last == '-' || first == '-' {
+		return false
+	}
+	if gap > 0.4 {
+		return true
+	}
+	if isASCIIUpper(last) && isASCIIUpper(first) {
+		return true
+	}
+	return false
+}
+
+func isASCIIUpper(b byte) bool {
+	return b >= 'A' && b <= 'Z'
 }
 
 func ExtractMeta(parsed ParsedPDF) (Meta, error) {
@@ -150,14 +252,160 @@ func StoreOpinion(storage Storage, opinion Opinion) (Opinion, error) {
 func cleanExtractedText(text string) string {
 	lines := strings.Split(text, "\n")
 	clean := make([]string, 0, len(lines))
-	for _, line := range lines {
+	for index, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
+		if shouldSkipFootnoteMarkerLine(clean, lines, index, trimmed) {
+			continue
+		}
 		clean = append(clean, trimmed)
 	}
-	return strings.Join(clean, "\n")
+	return strings.Join(repairLineBreakHyphenationLines(clean), "\n")
+}
+
+func repairLineBreakHyphenationLines(lines []string) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	protectedCompounds := map[string]struct{}{
+		"substantial-evidence": {},
+		"well-founded":         {},
+	}
+
+	merged := make([]string, 0, len(lines))
+	index := 0
+	for index < len(lines) {
+		current := lines[index]
+		if index+1 >= len(lines) {
+			merged = append(merged, current)
+			break
+		}
+
+		prefix, left, ok := splitTrailingHyphenWord(current)
+		right, rightRest, okNext := leadingWord(lines[index+1])
+		if ok && okNext {
+			compound := strings.ToLower(left + "-" + right)
+			switch {
+			case shouldPreserveLineBreakCompound(compound, protectedCompounds):
+				merged = append(merged, strings.TrimSpace(prefix+left+"-"+right+rightRest))
+				index += 2
+				continue
+			case shouldRepairLineBreakHyphen(left, right):
+				merged = append(merged, strings.TrimSpace(prefix+left+right+rightRest))
+				index += 2
+				continue
+			}
+		}
+
+		merged = append(merged, current)
+		index++
+	}
+	return merged
+}
+
+func splitTrailingHyphenWord(line string) (string, string, bool) {
+	match := trailingHyphenPattern.FindStringSubmatchIndex(line)
+	if len(match) < 4 {
+		return "", "", false
+	}
+	return line[:match[2]], line[match[2]:match[3]], true
+}
+
+func leadingWord(line string) (string, string, bool) {
+	line = strings.TrimLeft(line, " ")
+	end := 0
+	for end < len(line) {
+		b := line[end]
+		if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') {
+			end++
+			continue
+		}
+		break
+	}
+	if end == 0 {
+		return "", "", false
+	}
+	return line[:end], line[end:], true
+}
+
+func shouldPreserveLineBreakCompound(compound string, protected map[string]struct{}) bool {
+	_, ok := protected[compound]
+	return ok
+}
+
+func shouldRepairLineBreakHyphen(left string, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	return startsWithLowerASCII(right)
+}
+
+func startsWithLowerASCII(text string) bool {
+	if text == "" {
+		return false
+	}
+	b := text[0]
+	return b >= 'a' && b <= 'z'
+}
+
+func shouldSkipFootnoteMarkerLine(clean []string, lines []string, index int, line string) bool {
+	if !digitsOnly(line) || len(clean) == 0 {
+		return false
+	}
+	previous := clean[len(clean)-1]
+	next, ok := nextNonEmptyLine(lines, index+1)
+	if !ok {
+		return false
+	}
+	return endsWithLower(previous) && startsWithLower(next)
+}
+
+func nextNonEmptyLine(lines []string, start int) (string, bool) {
+	for index := start; index < len(lines); index++ {
+		trimmed := strings.TrimSpace(lines[index])
+		if trimmed != "" {
+			return trimmed, true
+		}
+	}
+	return "", false
+}
+
+func digitsOnly(line string) bool {
+	for _, r := range line {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return line != ""
+}
+
+func endsWithLower(text string) bool {
+	for index := len(text) - 1; index >= 0; index-- {
+		r := text[index]
+		if r >= 'a' && r <= 'z' {
+			return true
+		}
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return false
+}
+
+func startsWithLower(text string) bool {
+	for index := 0; index < len(text); index++ {
+		r := text[index]
+		if r >= 'a' && r <= 'z' {
+			return true
+		}
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return false
 }
 
 func nonEmptyLines(text string) []string {
@@ -173,7 +421,8 @@ func nonEmptyLines(text string) []string {
 }
 
 func firstFullCaption(text string) string {
-	matches := fullCaptionPattern.FindAllStringSubmatch(text, -1)
+	normalized := strings.Join(strings.Fields(text), " ")
+	matches := fullCaptionPattern.FindAllStringSubmatch(normalized, -1)
 	for _, match := range matches {
 		if len(match) < 2 {
 			continue

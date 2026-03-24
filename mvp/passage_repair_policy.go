@@ -50,7 +50,6 @@ type SystemPassageTransformKind string
 const (
 	SystemPassageTransformRemoveRunningHeaders      SystemPassageTransformKind = "remove_running_headers"
 	SystemPassageTransformRepairHyphenation         SystemPassageTransformKind = "repair_hyphenation_artifacts"
-	SystemPassageTransformRepairJoinedWords         SystemPassageTransformKind = "repair_joined_word_artifacts"
 	SystemPassageTransformRerunSentenceSegmentation SystemPassageTransformKind = "rerun_sentence_segmentation"
 	SystemPassageTransformGuessSentenceRepair       SystemPassageTransformKind = "guessSentenceRepair"
 	SystemPassageTransformGuessIssueClass           SystemPassageTransformKind = "guessIssueClass"
@@ -60,7 +59,6 @@ func ParseSystemPassageTransformKind(value string) (SystemPassageTransformKind, 
 	switch SystemPassageTransformKind(strings.TrimSpace(value)) {
 	case SystemPassageTransformRemoveRunningHeaders,
 		SystemPassageTransformRepairHyphenation,
-		SystemPassageTransformRepairJoinedWords,
 		SystemPassageTransformRerunSentenceSegmentation,
 		SystemPassageTransformGuessSentenceRepair,
 		SystemPassageTransformGuessIssueClass:
